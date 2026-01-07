@@ -90,22 +90,30 @@ npm run dev
 
 本项目包含自动部署脚本，支持在 Linux 服务器（推荐 CentOS/OpenCloudOS/Ubuntu）上快速部署。
 
+**线上环境**：http://wxwork.eastpolar.top:8080
+
 **前置要求**：
 *   Python 3.9+
 *   Nginx
 *   Redis
+*   防火墙放行 **TCP 8080** 端口
 
 **部署步骤**：
 
 1.  **克隆项目**到服务器 `/www/wwwroot/WxWork` 目录。
 2.  **配置 Nginx**：
     将 `deploy/nginx.conf` 复制到 Nginx 配置目录并重载。
+    *   默认监听端口：`8080`
+    *   默认域名：`wxwork.eastpolar.top`
 3.  **运行部署脚本**：
     ```bash
     cd deploy
     bash deploy.sh
     ```
     脚本会自动安装 Python 依赖、构建前端资源、配置 Systemd 服务并启动。
+
+**Cloudflare 配置注意事项**：
+如果您的域名使用 Cloudflare 代理，请确保 SSL/TLS 模式设置为 **"Flexible"**，因为后端服务目前使用 HTTP 协议监听 8080 端口。
 
 ## 📂 项目结构
 
@@ -130,7 +138,7 @@ WxWorkSchedule/
 │   └── vite.config.ts
 ├── deploy/                 # 部署相关文件
 │   ├── deploy.sh           # 一键部署脚本
-│   ├── nginx.conf          # Nginx 配置文件
+│   ├── nginx.conf          # Nginx 配置文件 (8080端口)
 │   └── wxwork-schedule.service # Systemd 服务配置
 └── README.md
 ```
