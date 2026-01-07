@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.env
+.venv
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment Variables and Secrets
+.env
+.env.*
+!.env.example
+config.json
+secrets.yaml
+key.pem
+
+# Logs
+*.log
+logs/
+
+# Frontend
+node_modules/
+dist/
+.DS_Store
+coverage/
+.npm/
