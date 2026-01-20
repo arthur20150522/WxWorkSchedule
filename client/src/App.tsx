@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { QrCode, Users, MessageSquare, List, RefreshCw, Trash2, CheckCircle, XCircle, FileText, Bug, Terminal } from 'lucide-react';
