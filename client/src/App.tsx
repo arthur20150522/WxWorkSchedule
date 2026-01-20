@@ -1,16 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
-import { QrCode, Users, MessageSquare, List, RefreshCw, Trash2, CheckCircle, XCircle, FileText } from 'lucide-react';
+import { QrCode, Users, MessageSquare, List, RefreshCw, Trash2, CheckCircle, XCircle, FileText, Bug, Terminal } from 'lucide-react';
 import clsx from 'clsx';
 
 // Types
 interface BotStatus {
+// ... existing types ...
   status: 'offline' | 'waiting_for_scan' | 'logged_in';
   ready?: boolean;
   user?: { name: string; id: string };
   loginTime?: string;
 }
+
+interface ToastMsg {
+    id: string;
+    type: 'success' | 'error' | 'info';
+    message: string;
+}
+
+interface DebugLog {
+    id: string;
+    type: 'log' | 'error' | 'warn';
+    message: string;
+    timestamp: string;
+}
+
+// ... existing interfaces ...
 
 interface Group {
   id: string;
@@ -144,6 +160,64 @@ function App() {
   }>({ isOpen: false, title: '', message: '', onConfirm: async () => {} });
 
   const closeConfirm = () => setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+
+  // Toasts
+  const [toasts, setToasts] = useState<ToastMsg[]>([]);
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+      const id = Date.now().toString() + Math.random();
+      setToasts(prev => [...prev, { id, type, message }]);
+      setTimeout(() => {
+          setToasts(prev => prev.filter(t => t.id !== id));
+      }, 5000); // 5 seconds
+  };
+
+  // Debug Console
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
+  
+  useEffect(() => {
+      const originalLog = console.log;
+      const originalError = console.error;
+      const originalWarn = console.warn;
+
+      const addLog = (type: 'log' | 'error' | 'warn', args: any[]) => {
+          const message = args.map(a => {
+              try {
+                  return typeof a === 'object' ? JSON.stringify(a) : String(a);
+              } catch (e) {
+                  return '[Circular]';
+              }
+          }).join(' ');
+          
+          setDebugLogs(prev => [{
+              id: Date.now().toString() + Math.random(),
+              type,
+              message,
+              timestamp: new Date().toISOString()
+          }, ...prev].slice(0, 100)); // Keep last 100 logs
+      };
+
+      console.log = (...args) => {
+          originalLog(...args);
+          addLog('log', args);
+      };
+
+      console.error = (...args) => {
+          originalError(...args);
+          addLog('error', args);
+      };
+
+      console.warn = (...args) => {
+          originalWarn(...args);
+          addLog('warn', args);
+      };
+
+      return () => {
+          console.log = originalLog;
+          console.error = originalError;
+          console.warn = originalWarn;
+      };
+  }, []);
 
   // Task Form State
   const initialNewTask: Partial<Task> & {
@@ -286,7 +360,7 @@ function App() {
                 setBotStatus({ status: 'offline' });
                 setQrCode(null);
             } catch (e) {
-                alert('重启失败');
+                showToast('重启失败', 'error');
             } finally {
                 setTimeout(() => setIsRestarting(false), 5000);
             }
@@ -361,8 +435,9 @@ function App() {
       setActiveTab('tasks');
       // Reset form (keep some defaults)
       setNewTask({ ...newTask, content: '', scheduleTime: '' });
+      showToast('任务创建成功', 'success');
     } catch (e) {
-      alert(t.createFailed);
+      showToast(t.createFailed, 'error');
     }
   };
 
@@ -379,8 +454,9 @@ function App() {
                 console.log('Delete response:', res.status, res.data);
                 if (res.data.success) {
                     await fetchTasks();
+                    showToast('删除成功', 'success');
                 } else {
-                    alert('删除失败，服务器返回异常');
+                    showToast('删除失败，服务器返回异常', 'error');
                 }
             } catch (e: any) {
                 console.error('Delete failed:', e);
@@ -390,7 +466,7 @@ function App() {
                 } else if (e.request) {
                     errMsg = 'Network Error: No response received';
                 }
-                alert(`删除请求失败: ${errMsg}`);
+                showToast(`删除请求失败: ${errMsg}`, 'error');
             }
         }
     });
@@ -445,7 +521,7 @@ function App() {
                 // Token expired or invalid
                 setIsAuthenticated(false);
                 setToken(null);
-                alert('Session expired. Please login again.');
+                showToast('Session expired. Please login again.', 'warn' as any);
             }
             return Promise.reject(error);
         }
@@ -491,9 +567,9 @@ function App() {
         }
     } catch (e: any) {
         if (e.response && e.response.status === 401) {
-            alert(t.invalidPassword);
+            showToast(t.invalidPassword, 'error');
         } else {
-            alert('Login failed: ' + (e.response?.data?.error || e.message));
+            showToast('Login failed: ' + (e.response?.data?.error || e.message), 'error');
         }
     }
   };
@@ -607,9 +683,19 @@ function App() {
                         }
                     });
                 }}
-                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm font-semibold text-slate-400 hover:text-red-400 hover:bg-red-950/30 rounded-xl transition-all"
+                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm font-semibold text-slate-400 hover:text-red-400 hover:bg-red-950/30 rounded-xl transition-all mb-2"
              >
                  <XCircle className="w-5 h-5" /> {t.logout}
+             </button>
+             
+             <button
+               onClick={() => setShowDebug(!showDebug)}
+               className={clsx(
+                 "w-full flex items-center gap-3 px-5 py-3.5 text-sm font-semibold rounded-xl transition-all",
+                 showDebug ? "text-yellow-400 bg-yellow-950/30" : "text-slate-400 hover:text-yellow-400 hover:bg-yellow-950/30"
+               )}
+             >
+               <Bug className="w-5 h-5" /> 调试模式
              </button>
         </div>
       </div>
@@ -1066,6 +1152,52 @@ function App() {
         )}
         </div>
       </main>
+
+      {/* Toasts */}
+      {createPortal(
+        <div className="fixed top-4 right-4 z-[10000] flex flex-col gap-2 pointer-events-none">
+          {toasts.map(t => (
+            <div key={t.id} className={clsx(
+              "px-4 py-3 rounded-lg shadow-lg text-white font-medium min-w-[200px] animate-in slide-in-from-right pointer-events-auto flex items-center gap-2",
+              t.type === 'success' ? "bg-green-600" : t.type === 'error' ? "bg-red-600" : "bg-blue-600"
+            )}>
+               {t.type === 'success' && <CheckCircle className="w-5 h-5" />}
+               {t.type === 'error' && <XCircle className="w-5 h-5" />}
+               {t.type === 'info' && <FileText className="w-5 h-5" />}
+               {t.message}
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
+
+      {/* Debug Console */}
+      {showDebug && createPortal(
+          <div className="fixed bottom-0 left-0 right-0 h-64 bg-black/90 text-green-400 font-mono text-xs z-[9999] overflow-hidden flex flex-col border-t border-gray-700">
+              <div className="flex justify-between items-center px-4 py-2 bg-gray-800 border-b border-gray-700">
+                  <div className="flex items-center gap-2">
+                      <Terminal className="w-4 h-4" />
+                      <span className="font-bold">Debug Console</span>
+                  </div>
+                  <button onClick={() => setDebugLogs([])} className="text-gray-400 hover:text-white">Clear</button>
+                  <button onClick={() => setShowDebug(false)} className="text-gray-400 hover:text-white">Close</button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-1">
+                  {debugLogs.length === 0 && <div className="text-gray-600 italic">No logs yet...</div>}
+                  {debugLogs.map(log => (
+                      <div key={log.id} className="break-all border-b border-gray-800/50 pb-0.5">
+                          <span className="text-gray-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                          <span className={clsx(
+                              "mx-2 font-bold uppercase w-12 inline-block",
+                              log.type === 'error' ? "text-red-500" : log.type === 'warn' ? "text-yellow-500" : "text-blue-500"
+                          )}>{log.type}</span>
+                          <span className="text-gray-300 whitespace-pre-wrap">{log.message}</span>
+                      </div>
+                  ))}
+              </div>
+          </div>,
+          document.body
+      )}
 
       {/* Confirm Dialog */}
       {confirmDialog.isOpen && createPortal(
