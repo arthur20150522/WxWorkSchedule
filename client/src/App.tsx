@@ -367,13 +367,25 @@ function App() {
   };
 
   const deleteTask = async (id: string) => {
+    console.log('Requesting delete for task:', id);
     setConfirmDialog({
         isOpen: true,
         title: '删除任务',
         message: t.deleteConfirm,
         onConfirm: async () => {
-            await axios.delete(`/api/tasks/${id}`);
-            fetchTasks();
+            try {
+                console.log('Sending delete request...');
+                const res = await axios.delete(`/api/tasks/${id}`);
+                console.log('Delete response:', res.data);
+                if (res.data.success) {
+                    await fetchTasks();
+                } else {
+                    alert('删除失败');
+                }
+            } catch (e) {
+                console.error('Delete failed:', e);
+                alert('删除请求失败: ' + (e instanceof Error ? e.message : String(e)));
+            }
         }
     });
   };
