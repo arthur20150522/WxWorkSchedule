@@ -5,34 +5,44 @@ import { BotManager } from './botManager.js';
 import { DBManager, Task, addLog } from './dbManager.js';
 import { UserManager } from './userManager.js';
 import { authenticateToken, generateToken, AuthRequest } from './authMiddleware.js';
-import fs from 'fs';
-import path from 'path';
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
+// Helper for error handling
+const handleError = (res: express.Response, e: unknown) => {
+    console.error(e);
+    const message = e instanceof Error ? e.message : 'Unknown internal server error';
+    res.status(500).json({ error: message });
+};
+
 // Login API
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     
-    // Legacy support removed, require username
     if (!username) {
          return res.status(400).json({ error: 'Username is required' });
     }
     
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
-    if (UserManager.verifyUser(username, password)) {
-        const token = generateToken(username);
-        // Ensure bot is initialized for this user
-        BotManager.getBot(username);
-        
-        await addLog(username, 'info', `User ${username} logged in from ${ip}`);
-        res.json({ success: true, token, username: username });
-    } else {
-        console.warn(`Failed login attempt for ${username} from ${ip}`);
-        res.status(401).json({ error: 'Invalid credentials' });
+    try {
+        // Await the async verification (handles bcrypt and migration)
+        const isValid = await UserManager.verifyUser(username, password);
+        if (isValid) {
+            const token = generateToken(username);
+            // Ensure bot is initialized for this user
+            BotManager.getBot(username);
+            
+            await addLog(username, 'info', `User ${username} logged in from ${ip}`);
+            res.json({ success: true, token, username: username });
+        } else {
+            console.warn(`Failed login attempt for ${username} from ${ip}`);
+            res.status(401).json({ error: 'Invalid credentials' });
+        }
+    } catch (e) {
+        handleError(res, e);
     }
 });
 
@@ -42,41 +52,48 @@ apiRouter.use(authenticateToken);
 
 // Logout API
 apiRouter.post('/logout', async (req, res) => {
-    const user = (req as AuthRequest).user!;
-    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    await addLog(user, 'info', `User ${user} logged out from ${ip}`);
-    res.json({ success: true });
+    try {
+        const user = (req as AuthRequest).user!;
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        await addLog(user, 'info', `User ${user} logged out from ${ip}`);
+        res.json({ success: true });
+    } catch (e) {
+        handleError(res, e);
+    }
 });
 
 // Bot Status
 apiRouter.get('/status', (req, res) => {
-    const user = (req as AuthRequest).user!;
-    const bot = BotManager.getBot(user);
-    
-    // Simple status for now
-    let currentUserData = null;
     try {
-        if (bot.isLoggedIn) {
-             currentUserData = { name: bot.currentUser.name(), id: bot.currentUser.id };
+        const user = (req as AuthRequest).user!;
+        const bot = BotManager.getBot(user);
+        
+        // Simple status for now
+        let currentUserData = null;
+        try {
+            if (bot.isLoggedIn) {
+                 currentUserData = { name: bot.currentUser.name(), id: bot.currentUser.id };
+            }
+        } catch (e) {
+            console.warn('Failed to get currentUser info', e);
         }
+
+        let status = 'offline';
+        if (bot.isLoggedIn) {
+            status = 'logged_in';
+        } else if (BotManager.getQrCode(user)) {
+            status = 'waiting_for_scan';
+        }
+
+        res.json({
+            status,
+            ready: bot.isLoggedIn,
+            user: currentUserData,
+            loginTime: bot.isLoggedIn ? BotManager.getLoginTime(user) : null
+        });
     } catch (e) {
-        // Ignore error if currentUser is not ready
-        console.warn('Failed to get currentUser info', e);
+        handleError(res, e);
     }
-
-    let status = 'offline';
-    if (bot.isLoggedIn) {
-        status = 'logged_in';
-    } else if (BotManager.getQrCode(user)) {
-        status = 'waiting_for_scan';
-    }
-
-    res.json({
-        status,
-        ready: bot.isLoggedIn,
-        user: currentUserData,
-        loginTime: bot.isLoggedIn ? BotManager.getLoginTime(user) : null
-    });
 });
 
 // Restart Bot
@@ -90,22 +107,21 @@ apiRouter.post('/bot/restart', async (req, res) => {
         BotManager.getBot(user); // Start again
         
         res.json({ success: true, message: 'Bot restarting...' });
-    } catch (e: any) {
-        await addLog(user, 'error', `Bot restart failed: ${e.message}`);
-        res.status(500).json({ error: e.message });
+    } catch (e) {
+        await addLog(user, 'error', `Bot restart failed: ${e instanceof Error ? e.message : String(e)}`);
+        handleError(res, e);
     }
 });
 
 // QR Code
 apiRouter.get('/qr', (req, res) => {
-     const user = (req as AuthRequest).user!;
-     const qr = BotManager.getQrCode(user);
-     
-     // Check if we have a QR code, if so status is likely waiting_for_scan
-     // But client relies on /status API to know if it should fetch QR
-     // We can improve /status API to return waiting_for_scan if QR exists and not logged in
-     
-     res.json({ qr }); 
+    try {
+         const user = (req as AuthRequest).user!;
+         const qr = BotManager.getQrCode(user);
+         res.json({ qr }); 
+    } catch (e) {
+        handleError(res, e);
+    }
 });
 
 // Get Groups (Rooms)
@@ -127,8 +143,8 @@ apiRouter.get('/groups', async (req, res) => {
             };
         }));
         res.json(roomData);
-    } catch (e: any) {
-        res.status(500).json({ error: e.message });
+    } catch (e) {
+        handleError(res, e);
     }
 });
 
@@ -150,57 +166,73 @@ apiRouter.get('/contacts', async (req, res) => {
             type: c.type()
         }));
         res.json(contactData);
-    } catch (e: any) {
-        res.status(500).json({ error: e.message });
+    } catch (e) {
+        handleError(res, e);
     }
 });
 
 // Tasks
 apiRouter.get('/tasks', async (req, res) => {
-    const user = (req as AuthRequest).user!;
-    const db = await DBManager.getDb(user);
-    res.json(db.data.tasks);
+    try {
+        const user = (req as AuthRequest).user!;
+        const db = await DBManager.getDb(user);
+        res.json(db.data.tasks);
+    } catch (e) {
+        handleError(res, e);
+    }
 });
 
 apiRouter.post('/tasks', async (req, res) => {
-    const user = (req as AuthRequest).user!;
-    const db = await DBManager.getDb(user);
-    
-    const task: Task = {
-        id: Date.now().toString(),
-        ...req.body,
-        recurrence: req.body.recurrence || 'once',
-        status: 'pending',
-        createdAt: new Date().toISOString()
-    };
-  
-    await db.update(({ tasks }) => tasks.push(task));
-    await addLog(user, 'info', `Created task ${task.id} for ${task.targetName} (${task.recurrence})`);
-    res.json(task);
+    try {
+        const user = (req as AuthRequest).user!;
+        const db = await DBManager.getDb(user);
+        
+        const task: Task = {
+            id: Date.now().toString(),
+            ...req.body,
+            recurrence: req.body.recurrence || 'once',
+            status: 'pending',
+            createdAt: new Date().toISOString()
+        };
+      
+        await db.update(({ tasks }) => tasks.push(task));
+        await addLog(user, 'info', `Created task ${task.id} for ${task.targetName} (${task.recurrence})`);
+        res.json(task);
+    } catch (e) {
+        handleError(res, e);
+    }
 });
 
 apiRouter.delete('/tasks/:id', async (req, res) => {
-    const user = (req as AuthRequest).user!;
-    const db = await DBManager.getDb(user);
-    const { id } = req.params;
-    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  
-    await db.update(({ tasks }) => {
-        const index = tasks.findIndex(t => t.id === id);
-        if (index > -1) {
-            tasks.splice(index, 1);
-        }
-    });
-    await addLog(user, 'info', `Task ${id} deleted by admin from ${ip}`);
-    res.json({ success: true });
+    try {
+        const user = (req as AuthRequest).user!;
+        const db = await DBManager.getDb(user);
+        const { id } = req.params;
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+      
+        await db.update(({ tasks }) => {
+            const index = tasks.findIndex(t => t.id === id);
+            if (index > -1) {
+                tasks.splice(index, 1);
+            }
+        });
+        await addLog(user, 'info', `Task ${id} deleted by admin from ${ip}`);
+        res.json({ success: true });
+    } catch (e) {
+        handleError(res, e);
+    }
 });
 
 // Logs
 apiRouter.get('/logs', async (req, res) => {
-    const user = (req as AuthRequest).user!;
-    const db = await DBManager.getDb(user);
-    const logs = db.data.logs.slice(-100).reverse();
-    res.json(logs);
+    try {
+        const user = (req as AuthRequest).user!;
+        const db = await DBManager.getDb(user);
+        const logs = db.data.logs.slice(-100).reverse();
+        res.json(logs);
+    } catch (e) {
+        handleError(res, e);
+    }
 });
 
 // Mount protected routes

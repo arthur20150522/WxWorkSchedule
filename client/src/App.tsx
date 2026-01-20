@@ -19,8 +19,31 @@ interface Group {
   memberCount: number;
 }
 
+interface Task {
+  id: string;
+  type: 'text' | 'image' | 'file';
+  targetType: 'group' | 'contact';
+  targetId: string;
+  targetName: string;
+  content: string;
+  scheduleTime: string;
+  status: 'pending' | 'success' | 'failed';
+  error?: string;
+  recurrence?: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
+  intervalValue?: number;
+  intervalUnit?: 'minute' | 'hour' | 'day';
+}
+
+interface Log {
+    id: string;
+    level: 'info' | 'error' | 'warn';
+    message: string;
+    timestamp: string;
+    taskId?: string;
+}
+
 // Translations
-const t = {
+const t: any = {
     title: "微信机器人管理",
     login: "登录",
     logout: "退出登录",

@@ -2,7 +2,7 @@ import 'dotenv/config'; // Load .env file
 import { app } from './api.js';
 import { startScheduler } from './scheduler.js';
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 const main = async () => {
   // Start Express API

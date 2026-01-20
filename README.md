@@ -110,6 +110,54 @@ JWT_SECRET=your_super_secure_secret_key
 5. 在“任务管理”页创建定时任务
 6. 在“系统日志”页查看运行日志
 
+## 部署到远程服务器
+
+项目提供了部署脚本 `deploy.ps1` 和 Nginx 示例配置 `nginx.conf.example`。
+
+### 1) 前置条件
+
+- 本地环境已安装 `ssh` 和 `scp`（Windows 通常已内置）。
+- 拥有目标服务器的 SSH 访问权限。
+- 目标服务器已安装 `node` (v18+), `npm`, `pm2`, `nginx`。
+
+### 2) 部署步骤
+
+1. 修改 `deploy.ps1` 中的配置：
+   ```powershell
+   $SERVER_IP = "43.153.88.215"
+   $REMOTE_DIR = "/www/wwwroot/WxWork"
+   $USER = "root"
+   ```
+2. 在本地 PowerShell 中运行部署脚本：
+   ```powershell
+   .\deploy.ps1
+   ```
+   该脚本会自动：
+   - 在本地构建前端 (`client/dist`) 和后端 (`server/dist`)
+   - 将构建产物上传到服务器
+   - 在服务器上安装依赖并使用 PM2 启动服务
+
+### 3) 配置 Nginx
+
+参考 `nginx.conf.example` 配置服务器 Nginx，以反向代理 API 并服务静态文件：
+
+```nginx
+server {
+    listen 80;
+    server_name your_domain_or_ip;
+    root /www/wwwroot/WxWork/client;
+    
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+    
+    location /api/ {
+        proxy_pass http://localhost:3000/api/;
+        ...
+    }
+}
+```
+
 ## 数据存储
 
 - 所有数据按用户名隔离存储在 `server/users/<username>/` 目录下。

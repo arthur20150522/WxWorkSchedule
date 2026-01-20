@@ -2,7 +2,10 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import { UserManager } from './userManager.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-me';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    throw new Error('JWT_SECRET is not defined in environment variables');
+}
 
 export interface AuthRequest extends express.Request {
     user?: string;
