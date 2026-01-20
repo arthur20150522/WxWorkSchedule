@@ -443,33 +443,33 @@ function App() {
 
   const deleteTask = async (id: string) => {
     console.log('Requesting delete for task:', id);
-    setConfirmDialog({
-        isOpen: true,
-        title: '删除任务',
-        message: t.deleteConfirm,
-        onConfirm: async () => {
-            try {
-                console.log('Sending delete request for id:', id);
-                const res = await axios.delete(`/api/tasks/${id}`);
-                console.log('Delete response:', res.status, res.data);
-                if (res.data.success) {
-                    await fetchTasks();
-                    showToast('删除成功', 'success');
-                } else {
-                    showToast('删除失败，服务器返回异常', 'error');
-                }
-            } catch (e: any) {
-                console.error('Delete failed:', e);
-                let errMsg = e.message;
-                if (e.response) {
-                    errMsg = `Server Error (${e.response.status}): ${JSON.stringify(e.response.data)}`;
-                } else if (e.request) {
-                    errMsg = 'Network Error: No response received';
-                }
-                showToast(`删除请求失败: ${errMsg}`, 'error');
-            }
+    
+    // 使用原生 confirm 以排除 UI 组件问题，确保能弹出来
+    if (!window.confirm(t.deleteConfirm)) {
+        return;
+    }
+
+    try {
+        showToast('正在删除...', 'info');
+        console.log('Sending delete request for id:', id);
+        const res = await axios.delete(`/api/tasks/${id}`);
+        console.log('Delete response:', res.status, res.data);
+        if (res.data.success) {
+            await fetchTasks();
+            showToast('删除成功', 'success');
+        } else {
+            showToast('删除失败，服务器返回异常', 'error');
         }
-    });
+    } catch (e: any) {
+        console.error('Delete failed:', e);
+        let errMsg = e.message;
+        if (e.response) {
+            errMsg = `Server Error (${e.response.status}): ${JSON.stringify(e.response.data)}`;
+        } else if (e.request) {
+            errMsg = 'Network Error: No response received';
+        }
+        showToast(`删除请求失败: ${errMsg}`, 'error');
+    }
   };
 
   useEffect(() => {
