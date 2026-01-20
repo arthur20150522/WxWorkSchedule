@@ -203,6 +203,39 @@ apiRouter.post('/tasks', async (req, res) => {
     }
 });
 
+apiRouter.put('/tasks/:id', async (req, res) => {
+    try {
+        const user = (req as AuthRequest).user!;
+        const db = await DBManager.getDb(user);
+        const { id } = req.params;
+        const updates = req.body;
+
+        let updatedTask: Task | null = null;
+        await db.update(({ tasks }) => {
+            const index = tasks.findIndex(t => String(t.id) === String(id));
+            if (index > -1) {
+                // Keep original ID and createdAt, update other fields
+                tasks[index] = {
+                    ...tasks[index],
+                    ...updates,
+                    id: tasks[index].id, // Ensure ID doesn't change
+                    updatedAt: new Date().toISOString()
+                };
+                updatedTask = tasks[index];
+            }
+        });
+
+        if (updatedTask) {
+            await addLog(user, 'info', `Updated task ${id}`);
+            res.json(updatedTask);
+        } else {
+            res.status(404).json({ error: 'Task not found' });
+        }
+    } catch (e) {
+        handleError(res, e);
+    }
+});
+
 apiRouter.delete('/tasks/:id', async (req, res) => {
         try {
             const user = (req as AuthRequest).user!;

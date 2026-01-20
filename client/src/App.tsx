@@ -5,13 +5,15 @@ import { QrCode, Users, MessageSquare, List, RefreshCw, Trash2, CheckCircle, XCi
 import clsx from 'clsx';
 
 // Types
-interface BotStatus {
-// ... existing types ...
-  status: 'offline' | 'waiting_for_scan' | 'logged_in';
-  ready?: boolean;
-  user?: { name: string; id: string };
-  loginTime?: string;
-}
+  interface BotStatus {
+    status: 'offline' | 'waiting_for_scan' | 'logged_in';
+    ready?: boolean;
+    user?: { name: string; id: string };
+    loginTime?: string;
+  }
+  
+  // Loading State
+  const [isStatusLoading, setIsStatusLoading] = useState(true);
 
 interface ToastMsg {
     id: string;
@@ -144,6 +146,7 @@ const t: any = {
 function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'groups' | 'tasks' | 'logs'>('dashboard');
   const [botStatus, setBotStatus] = useState<BotStatus>({ status: 'offline' });
+  const [isStatusLoading, setIsStatusLoading] = useState(true);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [contacts, setContacts] = useState<{id: string, name: string}[]>([]);
@@ -253,12 +256,21 @@ function App() {
     setSearchQuery('');
     setTaskFilter('all');
     setIsRestarting(false);
-    setNewTask({ ...initialNewTask });
+    resetForm();
   };
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [taskSearchQuery, setTaskSearchQuery] = useState('');
   const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'success' | 'failed'>('all');
   
+  // Filtered Tasks
+  const filteredTasks = tasks
+    .filter(t => taskFilter === 'all' || t.status === taskFilter)
+    .filter(t => 
+        t.content.toLowerCase().includes(taskSearchQuery.toLowerCase()) || 
+        t.targetName.toLowerCase().includes(taskSearchQuery.toLowerCase())
+    );
+
   // Login Duration Component
   const LoginDuration = ({ startTime }: { startTime: string }) => {
       const [duration, setDuration] = useState({ days: 0, hours: 0, minutes: 0 });
@@ -309,6 +321,8 @@ function App() {
       }
     } catch (e) {
       console.error(e);
+    } finally {
+        setIsStatusLoading(false);
     }
   };
 
@@ -368,6 +382,13 @@ function App() {
     });
   };
 
+  const [isEditing, setIsEditing] = useState(false);
+  
+  const resetForm = () => {
+      setNewTask({ ...initialNewTask });
+      setIsEditing(false);
+  };
+
   const createTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTask.targetId || !newTask.content) return;
@@ -376,46 +397,31 @@ function App() {
     let finalScheduleTime = newTask.scheduleTime;
     const now = new Date();
     
+    // ... (keep existing schedule calculation logic) ...
     if (newTask.recurrence === 'interval') {
-         // For interval, use scheduleTime as start time, or default to now
-         if (!finalScheduleTime) {
-             finalScheduleTime = now.toISOString();
-         }
+         if (!finalScheduleTime) finalScheduleTime = now.toISOString();
     } else if (newTask.recurrence !== 'once') {
         const [hours, minutes] = newTask.uiTime.split(':').map(Number);
         let nextRun = new Date();
         nextRun.setHours(hours, minutes, 0, 0);
 
         if (newTask.recurrence === 'daily') {
-            if (nextRun <= now) {
-                nextRun.setDate(nextRun.getDate() + 1);
-            }
+            if (nextRun <= now) nextRun.setDate(nextRun.getDate() + 1);
         } else if (newTask.recurrence === 'weekly') {
-            const targetDay = parseInt(newTask.uiWeekday); // 1=Mon, 7=Sun
-            // JS Date: 0=Sun, 1=Mon...6=Sat
-            // Convert our target (1-7) to JS (1-6, 0)
+            const targetDay = parseInt(newTask.uiWeekday);
             const jsTargetDay = targetDay === 7 ? 0 : targetDay;
             const currentDay = nextRun.getDay();
-            
             let daysToAdd = (jsTargetDay - currentDay + 7) % 7;
-            if (daysToAdd === 0 && nextRun <= now) {
-                daysToAdd = 7;
-            }
+            if (daysToAdd === 0 && nextRun <= now) daysToAdd = 7;
             nextRun.setDate(nextRun.getDate() + daysToAdd);
         } else if (newTask.recurrence === 'monthly') {
             const targetDate = parseInt(newTask.uiDayOfMonth);
-            // Set to current month's target date
             nextRun.setDate(targetDate);
-            
-            // Handle edge cases (e.g. 31st in Feb) - JS Date auto rolls over, which is fine or needs check
-            // If we are past the time this month, move to next month
-            if (nextRun <= now) {
-                nextRun.setMonth(nextRun.getMonth() + 1);
-            }
+            if (nextRun <= now) nextRun.setMonth(nextRun.getMonth() + 1);
         }
         finalScheduleTime = nextRun.toISOString();
     } else {
-        if (!finalScheduleTime) return; // Required for 'once'
+        if (!finalScheduleTime) return;
     }
 
     let targetName = 'Unknown';
@@ -426,19 +432,47 @@ function App() {
     }
     
     try {
-      await axios.post('/api/tasks', {
-        ...newTask,
-        scheduleTime: finalScheduleTime,
-        targetName
-      });
+      if (isEditing && newTask.id) {
+          await axios.put(`/api/tasks/${newTask.id}`, {
+              ...newTask,
+              scheduleTime: finalScheduleTime,
+              targetName
+          });
+          showToast('任务更新成功', 'success');
+      } else {
+          await axios.post('/api/tasks', {
+              ...newTask,
+              scheduleTime: finalScheduleTime,
+              targetName
+          });
+          showToast('任务创建成功', 'success');
+      }
+      
       fetchTasks();
       setActiveTab('tasks');
-      // Reset form (keep some defaults)
-      setNewTask({ ...newTask, content: '', scheduleTime: '' });
-      showToast('任务创建成功', 'success');
+      resetForm();
     } catch (e) {
-      showToast(t.createFailed, 'error');
+      showToast(isEditing ? '更新失败' : t.createFailed, 'error');
     }
+  };
+
+  const editTask = (task: Task) => {
+      // Convert scheduleTime to UI formats
+      const date = new Date(task.scheduleTime);
+      const hours = date.getHours().toString().padStart(2, '0');
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      
+      setNewTask({
+          ...task,
+          uiTime: `${hours}:${minutes}`,
+          uiWeekday: task.recurrence === 'weekly' ? (date.getDay() === 0 ? '7' : date.getDay().toString()) : '1',
+          uiDayOfMonth: date.getDate().toString(),
+          intervalValue: task.intervalValue || 30,
+          intervalUnit: task.intervalUnit || 'minute'
+      });
+      setIsEditing(true);
+      // Scroll to form
+      window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const deleteTask = async (id: string) => {
@@ -482,11 +516,17 @@ function App() {
   useEffect(() => {
     // Only fetch data if logged in AND ready
     if (!isAuthenticated) return;
+    
+    // Auto fetch tasks when switching to tasks tab
+    if (activeTab === 'tasks') {
+        fetchTasks();
+    }
+    
     if (botStatus.status === 'logged_in' && botStatus.ready) {
       fetchGroups();
       fetchContacts();
     }
-  }, [botStatus.status, botStatus.ready, isAuthenticated]);
+  }, [botStatus.status, botStatus.ready, isAuthenticated, activeTab]);
 
   useEffect(() => {
     // Poll logs every 5 seconds if on logs tab
@@ -736,45 +776,54 @@ function App() {
                 {botStatus.status === 'waiting_for_scan' && <RefreshCw className="w-4 h-4 animate-spin" />}
                 {botStatus.status === 'offline' && <XCircle className="w-4 h-4" />}
                 {botStatus.status === 'logged_in' ? t.loggedIn : 
-                 botStatus.status === 'waiting_for_scan' ? t.waitingForScan : 
-                 t.offline}
-              </div>
+               botStatus.status === 'waiting_for_scan' ? t.waitingForScan : 
+               t.offline}
+            </div>
 
-              {botStatus.status === 'logged_in' && botStatus.user && (
-                <div className="space-y-2">
-                    <div className="text-lg">
-                      {t.loggedInAs} <span className="font-bold">{botStatus.user.name}</span>
+            {isStatusLoading ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                    <RefreshCw className="w-8 h-8 animate-spin text-green-500 mb-4" />
+                    <p className="text-gray-500">正在检查登录状态...</p>
+                </div>
+            ) : (
+              <>
+                {botStatus.status === 'logged_in' && botStatus.user && (
+                    <div className="space-y-2">
+                        <div className="text-lg">
+                        {t.loggedInAs} <span className="font-bold">{botStatus.user.name}</span>
+                        </div>
+                        {botStatus.loginTime && (
+                            <LoginDuration startTime={botStatus.loginTime} />
+                        )}
                     </div>
-                    {botStatus.loginTime && (
-                        <LoginDuration startTime={botStatus.loginTime} />
-                    )}
-                </div>
-              )}
+                )}
 
-              {botStatus.status === 'logged_in' && !botStatus.ready && (
-                 <div className="mt-4 flex items-center justify-center gap-2 text-yellow-600">
-                     <RefreshCw className="w-4 h-4 animate-spin" /> {t.syncing}
-                 </div>
-              )}
+                {botStatus.status === 'logged_in' && !botStatus.ready && (
+                    <div className="mt-4 flex items-center justify-center gap-2 text-yellow-600">
+                        <RefreshCw className="w-4 h-4 animate-spin" /> {t.syncing}
+                    </div>
+                )}
 
-              {botStatus.status === 'waiting_for_scan' && qrCode && (
-                <div className="mt-4 flex flex-col items-center">
-                  <p className="text-gray-500 mb-4">{t.scanQr}</p>
-                  <img 
-                    src={qrCode} 
-                    alt="QR Code" 
-                    className="w-64 h-64 border-2 border-gray-100 rounded-lg"
-                  />
-                </div>
-              )}
-              
-              {botStatus.status === 'offline' && (
-                  <div className="mt-4 text-gray-500">
-                      Check server logs if bot doesn't start.
-                  </div>
-              )}
+                {botStatus.status === 'waiting_for_scan' && qrCode && (
+                    <div className="mt-4 flex flex-col items-center">
+                    <p className="text-gray-500 mb-4">{t.scanQr}</p>
+                    <img 
+                        src={qrCode} 
+                        alt="QR Code" 
+                        className="w-64 h-64 border-2 border-gray-100 rounded-lg"
+                    />
+                    </div>
+                )}
+                
+                {botStatus.status === 'offline' && (
+                    <div className="mt-4 text-gray-500">
+                        Check server logs if bot doesn't start.
+                    </div>
+                )}
+              </>
+            )}
 
-              <div className="mt-8 pt-6 border-t border-gray-100">
+            <div className="mt-8 pt-6 border-t border-gray-100">
                   <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 text-left mb-6">
                       <h3 className="font-bold text-orange-800 text-sm mb-1">{t.riskWarningTitle}</h3>
                       <p className="text-orange-700 text-xs leading-relaxed">{t.riskWarningContent}</p>
@@ -839,7 +888,14 @@ function App() {
           <div className="space-y-8">
             {/* Create Task Form */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-              <h2 className="text-lg font-bold mb-4">{t.scheduleNew}</h2>
+              <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg font-bold">{isEditing ? '编辑任务' : t.scheduleNew}</h2>
+                  {isEditing && (
+                      <button onClick={resetForm} className="text-sm text-gray-500 hover:text-gray-700">
+                          取消编辑
+                      </button>
+                  )}
+              </div>
               <form onSubmit={createTask} className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.targetType}</label>
@@ -1041,8 +1097,11 @@ function App() {
                 </div>
 
                 <div className="flex items-end md:col-span-2">
-                  <button type="submit" className="w-full py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium">
-                    {t.scheduleTask}
+                  <button type="submit" className={clsx(
+                      "w-full py-2 text-white rounded font-medium transition-colors",
+                      isEditing ? "bg-blue-600 hover:bg-blue-700" : "bg-green-600 hover:bg-green-700"
+                  )}>
+                    {isEditing ? '更新任务' : t.scheduleTask}
                   </button>
                 </div>
               </form>
@@ -1050,9 +1109,16 @@ function App() {
 
             {/* Task List */}
             <div className="space-y-4">
-                <div className="flex justify-between items-center">
+                <div className="flex flex-col md:flex-row justify-between items-center gap-4">
                     <h2 className="text-lg font-bold">{t.scheduledTasks}</h2>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 w-full md:w-auto">
+                        <input 
+                            type="text" 
+                            placeholder="搜索任务内容/目标..."
+                            className="p-2 border border-gray-300 rounded text-sm flex-1 md:w-64"
+                            value={taskSearchQuery}
+                            onChange={e => setTaskSearchQuery(e.target.value)}
+                        />
                         <select 
                             value={taskFilter}
                             onChange={e => setTaskFilter(e.target.value as any)}
@@ -1082,9 +1148,7 @@ function App() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                            {tasks
-                                .filter(t => taskFilter === 'all' || t.status === taskFilter)
-                                .map(task => (
+                            {filteredTasks.map(task => (
                                 <tr key={task.id} className="hover:bg-gray-50">
                                     <td className="p-4 font-medium">{task.targetName}</td>
                                     <td className="p-4 truncate max-w-xs">{task.content}</td>
@@ -1108,16 +1172,21 @@ function App() {
                                         </span>
                                         {task.error && <p className="text-xs text-red-500 mt-1">{task.error}</p>}
                                     </td>
-                                    <td className="p-4">
+                                    <td className="p-4 flex items-center gap-2">
+                                        <button onClick={() => editTask(task)} className="text-blue-500 hover:text-blue-700">
+                                            <FileText className="w-4 h-4" />
+                                        </button>
                                         <button onClick={() => deleteTask(task.id)} className="text-red-500 hover:text-red-700">
                                             <Trash2 className="w-4 h-4" />
                                         </button>
                                     </td>
                                 </tr>
                             ))}
-                            {tasks.length === 0 && (
+                            {filteredTasks.length === 0 && (
                                 <tr>
-                                    <td colSpan={5} className="p-8 text-center text-gray-500">{t.noTasks}</td>
+                                    <td colSpan={6} className="p-8 text-center text-gray-500">
+                                        {tasks.length === 0 ? t.noTasks : '没有找到匹配的任务'}
+                                    </td>
                                 </tr>
                             )}
                         </tbody>
