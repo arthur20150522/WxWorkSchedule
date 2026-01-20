@@ -374,17 +374,23 @@ function App() {
         message: t.deleteConfirm,
         onConfirm: async () => {
             try {
-                console.log('Sending delete request...');
+                console.log('Sending delete request for id:', id);
                 const res = await axios.delete(`/api/tasks/${id}`);
-                console.log('Delete response:', res.data);
+                console.log('Delete response:', res.status, res.data);
                 if (res.data.success) {
                     await fetchTasks();
                 } else {
-                    alert('删除失败');
+                    alert('删除失败，服务器返回异常');
                 }
-            } catch (e) {
+            } catch (e: any) {
                 console.error('Delete failed:', e);
-                alert('删除请求失败: ' + (e instanceof Error ? e.message : String(e)));
+                let errMsg = e.message;
+                if (e.response) {
+                    errMsg = `Server Error (${e.response.status}): ${JSON.stringify(e.response.data)}`;
+                } else if (e.request) {
+                    errMsg = 'Network Error: No response received';
+                }
+                alert(`删除请求失败: ${errMsg}`);
             }
         }
     });

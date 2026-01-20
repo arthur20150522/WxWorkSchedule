@@ -12,13 +12,24 @@ export interface AuthRequest extends express.Request {
 }
 
 export const authenticateToken = (req: AuthRequest, res: express.Response, next: express.NextFunction) => {
+    // 允许 OPTIONS 请求直接通过 (如果 Nginx 没拦截，这里再次放行)
+    if (req.method === 'OPTIONS') {
+        return next();
+    }
+
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
-    if (!token) return res.sendStatus(401);
+    if (!token) {
+        console.warn(`[Auth] No token provided for ${req.method} ${req.url}`);
+        return res.sendStatus(401);
+    }
 
     jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
-        if (err) return res.sendStatus(403);
+        if (err) {
+            console.error(`[Auth] Token verification failed for ${req.method} ${req.url}:`, err.message);
+            return res.sendStatus(403);
+        }
         req.user = user.username;
         next();
     });
