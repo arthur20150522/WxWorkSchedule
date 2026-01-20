@@ -204,24 +204,35 @@ apiRouter.post('/tasks', async (req, res) => {
 });
 
 apiRouter.delete('/tasks/:id', async (req, res) => {
-    try {
-        const user = (req as AuthRequest).user!;
-        const db = await DBManager.getDb(user);
-        const { id } = req.params;
-        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-      
-        await db.update(({ tasks }) => {
-            const index = tasks.findIndex(t => t.id === id);
-            if (index > -1) {
-                tasks.splice(index, 1);
+        try {
+            const user = (req as AuthRequest).user!;
+            const db = await DBManager.getDb(user);
+            const { id } = req.params;
+            const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+          
+            console.log(`[API] Deleting task ${id} for user ${user}`);
+
+            let deleted = false;
+            await db.update(({ tasks }) => {
+                const index = tasks.findIndex(t => t.id === id);
+                console.log(`[API] Task index found: ${index} for id: ${id}. Total tasks: ${tasks.length}`);
+                if (index > -1) {
+                    tasks.splice(index, 1);
+                    deleted = true;
+                }
+            });
+
+            if (deleted) {
+                await addLog(user, 'info', `Task ${id} deleted by admin from ${ip}`);
+                res.json({ success: true });
+            } else {
+                console.warn(`[API] Task ${id} not found for deletion`);
+                res.status(404).json({ error: 'Task not found' });
             }
-        });
-        await addLog(user, 'info', `Task ${id} deleted by admin from ${ip}`);
-        res.json({ success: true });
-    } catch (e) {
-        handleError(res, e);
-    }
-});
+        } catch (e) {
+            handleError(res, e);
+        }
+    });
 
 // Logs
 apiRouter.get('/logs', async (req, res) => {
