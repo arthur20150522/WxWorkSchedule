@@ -214,7 +214,8 @@ apiRouter.delete('/tasks/:id', async (req, res) => {
 
             let deleted = false;
             await db.update(({ tasks }) => {
-                const index = tasks.findIndex(t => t.id === id);
+                // Use loose comparison to handle string/number ID mismatch issues
+                const index = tasks.findIndex(t => String(t.id) === String(id));
                 console.log(`[API] Task index found: ${index} for id: ${id}. Total tasks: ${tasks.length}`);
                 if (index > -1) {
                     tasks.splice(index, 1);
