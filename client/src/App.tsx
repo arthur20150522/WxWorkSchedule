@@ -147,22 +147,27 @@ function App() {
   const closeConfirm = () => setConfirmDialog(prev => ({ ...prev, isOpen: false }));
 
   // Task Form State
-  const initialNewTask = {
+  const initialNewTask: Partial<Task> & {
+    uiTime: string;
+    uiWeekday: string;
+    uiDayOfMonth: string;
+    intervalValue: number;
+    intervalUnit: 'minute' | 'hour' | 'day';
+  } = {
     type: 'text',
-    targetType: 'group', // 'group' | 'contact'
+    targetType: 'group',
     targetId: '',
     content: '',
-    scheduleTime: '', // For 'once' mode
+    scheduleTime: '', 
     recurrence: 'once',
-    // UI Helpers
     uiTime: '09:00',
-    uiWeekday: '1', // 1=Monday
+    uiWeekday: '1', 
     uiDayOfMonth: '1',
     intervalValue: 30,
     intervalUnit: 'minute'
-  } as const;
+  };
 
-  const [newTask, setNewTask] = useState({ ...initialNewTask });
+  const [newTask, setNewTask] = useState(initialNewTask);
 
   const resetAppState = () => {
     setActiveTab('dashboard');
