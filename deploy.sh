@@ -22,6 +22,9 @@ if ! command -v node &> /dev/null; then
     if [ -f /etc/redhat-release ] || [ -f /etc/centos-release ]; then
         curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
         yum install -y nodejs
+        # 安装 Puppeteer/Chrome 依赖 (针对 OpenCloudOS/CentOS Stream 9)
+        echo "安装 Chrome 依赖..."
+        dnf install -y nss atk at-spi2-atk cups-libs libdrm libXcomposite libXdamage libXrandr libgbm pango alsa-lib libXcursor libXi libXScrnSaver libXtst
     else
         # 假设是 Debian/Ubuntu 或者其他，尝试直接使用 nodesource 的脚本，如果不兼容再手动
         # 有些系统可能既不是 RH 也不是 Debian，比如 Alpine（不常见用于这种场景）
