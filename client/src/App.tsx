@@ -775,7 +775,7 @@ function App() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.messageType}</label>
                   <select 
                     value={newTask.type}
-                    onChange={e => setNewTask({...newTask, type: e.target.value})}
+                    onChange={e => setNewTask({...newTask, type: e.target.value as any})}
                     className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
                   >
                     <option value="text">{t.text}</option>
@@ -800,7 +800,7 @@ function App() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.recurrence}</label>
                   <select 
                     value={newTask.recurrence}
-                    onChange={e => setNewTask({...newTask, recurrence: e.target.value})}
+                    onChange={e => setNewTask({...newTask, recurrence: e.target.value as any})}
                     className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
                   >
                     <option value="once">{t.once}</option>
