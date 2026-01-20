@@ -1,6 +1,7 @@
 import { Wechaty, WechatyBuilder } from 'wechaty';
 import { UserManager } from './userManager.js';
 import path from 'path';
+import QRCode from 'qrcode';
 
 export class BotManager {
     private static instances: Map<string, Wechaty> = new Map();
@@ -37,14 +38,15 @@ export class BotManager {
         });
 
         // Setup basic listeners
-        bot.on('scan', (qrcode, status) => {
+        bot.on('scan', async (qrcode, status) => {
              console.log(`[${username}] Scan QR Code to login: ${status}\n${qrcode}`);
-             const qrcodeImageUrl = [
-                'https://wechaty.js.org/qrcode/',
-                encodeURIComponent(qrcode),
-              ].join('');
-             console.log(`[${username}] QR Image: ${qrcodeImageUrl}`);
-             BotManager.qrCodes.set(username, qrcodeImageUrl);
+             try {
+                 const qrcodeImageUrl = await QRCode.toDataURL(qrcode);
+                 console.log(`[${username}] QR Image generated successfully`);
+                 BotManager.qrCodes.set(username, qrcodeImageUrl);
+             } catch (e) {
+                 console.error(`[${username}] Failed to generate QR code image:`, e);
+             }
         });
 
         bot.on('login', user => {
