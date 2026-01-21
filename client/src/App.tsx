@@ -363,10 +363,17 @@ function App() {
 
   const fetchTemplates = async () => {
     try {
+      console.log('Fetching templates...');
       const res = await axios.get('/api/templates');
-      setTemplates(res.data);
+      console.log('Templates response:', res.data);
+      if (Array.isArray(res.data)) {
+          setTemplates(res.data);
+      } else {
+          console.error('Invalid templates data format:', res.data);
+          setTemplates([]);
+      }
     } catch (e) {
-      console.error(e);
+      console.error('Failed to fetch templates:', e);
     }
   };
 

@@ -60,6 +60,19 @@ export class DBManager {
         console.log(`Loading DB for ${username} at ${dbPath}`);
         const db = await JSONFilePreset<Data>(dbPath, defaultData);
         
+        // Ensure templates array exists (migration for old DBs)
+        await db.update((data) => {
+            if (!data.templates) {
+                data.templates = [];
+            }
+            if (!data.tasks) {
+                data.tasks = [];
+            }
+            if (!data.logs) {
+                data.logs = [];
+            }
+        });
+
         this.instances.set(username, db);
         return db;
     }

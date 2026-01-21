@@ -176,7 +176,9 @@ apiRouter.get('/templates', async (req, res) => {
     try {
         const user = (req as AuthRequest).user!;
         const db = await DBManager.getDb(user);
-        res.json(db.data.templates || []);
+        const templates = db.data.templates || [];
+        console.log(`[API] Fetching templates for ${user}: found ${templates.length}`);
+        res.json(templates);
     } catch (e) {
         handleError(res, e);
     }
