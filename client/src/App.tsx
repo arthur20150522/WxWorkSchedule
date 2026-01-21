@@ -338,8 +338,13 @@ function App() {
     try {
       const res = await axios.get('/api/groups');
       setGroups(res.data);
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      if (e.response && e.response.status === 503) {
+          // Bot not ready, ignore
+          setGroups([]);
+      } else {
+          console.error(e);
+      }
     }
   };
 
@@ -347,8 +352,13 @@ function App() {
     try {
         const res = await axios.get('/api/contacts');
         setContacts(res.data);
-    } catch (e) {
-        console.error(e);
+    } catch (e: any) {
+        if (e.response && e.response.status === 503) {
+            // Bot not ready, ignore
+            setContacts([]);
+        } else {
+            console.error(e);
+        }
     }
   };
 

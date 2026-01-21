@@ -14,7 +14,7 @@ const main = async () => {
   });
 
   // 显式处理 OPTIONS 请求 (防御性编程，以防 Nginx 未拦截)
-  app.options('*', (req, res) => {
+  app.options(/(.*)/, (req, res) => {
     console.log(`[${new Date().toISOString()}] Handling OPTIONS request in Express`);
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');

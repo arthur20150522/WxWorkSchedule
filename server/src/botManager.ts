@@ -2,9 +2,10 @@ import { Wechaty, WechatyBuilder } from 'wechaty';
 import { UserManager } from './userManager.js';
 import path from 'path';
 import QRCode from 'qrcode';
+import { MockBot } from './mockBot.js';
 
 export class BotManager {
-    private static instances: Map<string, Wechaty> = new Map();
+    private static instances: Map<string, Wechaty | any> = new Map();
     private static qrCodes: Map<string, string> = new Map();
     private static loginTimes: Map<string, string> = new Map();
 
@@ -16,9 +17,19 @@ export class BotManager {
         return this.loginTimes.get(username) || null;
     }
 
-    static getBot(username: string): Wechaty {
+    static getBot(username: string): Wechaty | any {
         if (this.instances.has(username)) {
             return this.instances.get(username)!;
+        }
+
+        // Use MockBot for 'test' user
+        if (username === 'test') {
+            console.log(`[BotManager] Initializing MockBot for ${username}`);
+            const mockBot = new MockBot(username);
+            this.instances.set(username, mockBot);
+            // Simulate login time immediately
+            this.loginTimes.set(username, new Date().toISOString());
+            return mockBot;
         }
 
         const userDir = UserManager.getUserDir(username);
