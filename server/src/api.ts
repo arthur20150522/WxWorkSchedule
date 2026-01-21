@@ -134,7 +134,7 @@ apiRouter.get('/groups', async (req, res) => {
     }
     try {
         const rooms = await bot.Room.findAll();
-        const roomData = await Promise.all(rooms.map(async (room) => {
+        const roomData = await Promise.all(rooms.map(async (room: any) => {
             const topic = await room.topic();
             return {
                 id: room.id,
@@ -158,9 +158,9 @@ apiRouter.get('/contacts', async (req, res) => {
     }
     try {
         const contacts = await bot.Contact.findAll();
-        const validContacts = contacts.filter(c => c.friend());
+        const validContacts = contacts.filter((c: any) => c.friend());
         
-        const contactData = validContacts.map(c => ({
+        const contactData = validContacts.map((c: any) => ({
             id: c.id,
             name: c.name(),
             type: c.type()
