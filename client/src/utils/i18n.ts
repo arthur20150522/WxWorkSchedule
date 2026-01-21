@@ -88,4 +88,6 @@ export const t = {
     batchDelete: "批量删除",
     selected: "已选择",
     items: "项",
+    loadFromTemplate: "从模板导入配置",
+    selectTemplate: "选择模板...",
 };

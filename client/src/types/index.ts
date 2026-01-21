@@ -6,16 +6,22 @@ export interface BotStatus {
   }
   
   export interface Template {
-      id: string;
-      name: string;
-      type: 'text';
-      content: string[];
-      targets: { type: 'group' | 'contact', id: string, name: string }[];
-      createdAt: string;
-  }string;
-  }
-  
-  export interface ToastMsg {
+    id: string;
+    name: string;
+    type: 'text';
+    content: string[];
+    targets?: { id: string; name: string; type: 'group' | 'contact' }[];
+    // Schedule configuration
+    recurrence: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
+    intervalValue?: number;
+    intervalUnit?: 'minute' | 'hour' | 'day';
+    uiTime?: string;
+    uiWeekday?: string;
+    uiDayOfMonth?: string;
+    createdAt: string;
+}
+
+export interface ToastMsg {
     id: string;
     type: 'success' | 'error' | 'info';
     message: string;
@@ -48,6 +54,10 @@ export interface BotStatus {
   recurrence?: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
   intervalValue?: number;
   intervalUnit?: 'minute' | 'hour' | 'day';
+  // UI helper fields for TaskDraft
+  uiTime?: string;
+  uiWeekday?: string;
+  uiDayOfMonth?: string;
 }
   
   export interface Log {

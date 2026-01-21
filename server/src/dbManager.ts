@@ -8,7 +8,13 @@ export interface Template {
   name: string;
   type: 'text';
   content: string[];
-  targets: { type: 'group' | 'contact', id: string, name: string }[]; // Associated targets
+  // Schedule configuration
+  recurrence: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
+  intervalValue?: number;
+  intervalUnit?: 'minute' | 'hour' | 'day';
+  uiTime?: string;
+  uiWeekday?: string;
+  uiDayOfMonth?: string;
   createdAt: string;
 }
 

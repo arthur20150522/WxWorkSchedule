@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { BotStatus, Group, Task, Template } from './types';
 import { t } from './utils/i18n';
@@ -168,7 +168,18 @@ function App() {
 
   const handleGenerateTask = async (template: Template) => {
       if (!template.targets || template.targets.length === 0) {
-          showToast('模板未关联目标', 'error');
+          // If no targets, redirect to task creation with template pre-filled
+          setDraftTask({
+              content: template.content,
+              recurrence: template.recurrence,
+              intervalValue: template.intervalValue,
+              intervalUnit: template.intervalUnit,
+              uiTime: template.uiTime,
+              uiWeekday: template.uiWeekday,
+              uiDayOfMonth: template.uiDayOfMonth
+          });
+          setActiveTab('tasks');
+          showToast('请选择发送对象', 'info');
           return;
       }
 
@@ -278,8 +289,6 @@ function App() {
               <TemplatesView 
                   templates={templates} 
                   fetchTemplates={fetchTemplates} 
-                  groups={groups} 
-                  contacts={contacts} 
                   showToast={showToast} 
                   onGenerateTask={handleGenerateTask} 
               />
@@ -287,6 +296,7 @@ function App() {
           {activeTab === 'tasks' && (
               <TasksView 
                   tasks={tasks} 
+                  templates={templates}
                   fetchTasks={fetchTasks} 
                   groups={groups} 
                   contacts={contacts} 

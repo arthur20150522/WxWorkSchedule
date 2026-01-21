@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { RefreshCw, Trash2, FileText } from 'lucide-react';
 import clsx from 'clsx';
 import { t } from '../utils/i18n';
-import { Task, Group } from '../types';
+import { Task, Group, Template } from '../types';
 import axios from 'axios';
 
 interface TasksViewProps {
     tasks: Task[];
+    templates: Template[];
     fetchTasks: () => Promise<void>;
     groups: Group[];
     contacts: {id: string, name: string}[];
@@ -15,16 +16,18 @@ interface TasksViewProps {
 }
 
 export const TasksView: React.FC<TasksViewProps> = ({ 
-    tasks, fetchTasks, groups, contacts, showToast, initialDraft
+    tasks, templates, fetchTasks, groups, contacts, showToast, initialDraft
 }) => {
     // Task Form State
-    const initialNewTask: Partial<Task> & {
-      uiTime: string;
-      uiWeekday: string;
-      uiDayOfMonth: string;
-      intervalValue: number;
-      intervalUnit: 'minute' | 'hour' | 'day';
-    } = {
+    type TaskDraft = Partial<Task> & {
+        uiTime: string;
+        uiWeekday: string;
+        uiDayOfMonth: string;
+        intervalValue: number;
+        intervalUnit: 'minute' | 'hour' | 'day';
+    };
+
+    const initialNewTask: TaskDraft = {
       type: 'text',
       targetType: 'group',
       targetId: '',
@@ -37,10 +40,14 @@ export const TasksView: React.FC<TasksViewProps> = ({
       intervalValue: 30,
       intervalUnit: 'minute'
     };
-  
-    const [newTask, setNewTask] = useState({ ...initialNewTask, ...initialDraft });
+    
+    const [newTask, setNewTask] = useState<TaskDraft>({
+        ...initialNewTask,
+        ...(initialDraft || {}),
+        content: initialDraft?.content && initialDraft.content.length > 0 ? initialDraft.content : initialNewTask.content
+    });
 
-    React.useEffect(() => {
+    useEffect(() => {
         if (initialDraft) {
             setNewTask(prev => ({ 
                 ...prev, 
@@ -53,9 +60,27 @@ export const TasksView: React.FC<TasksViewProps> = ({
     const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
     const [taskSearchQuery, setTaskSearchQuery] = useState('');
     const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'success' | 'failed'>('all');
+    const [selectedTargets, setSelectedTargets] = useState<{ type: 'group' | 'contact'; id: string; name: string }[]>([]);
+
+    const getIntervalUnitLabel = (unit?: 'minute' | 'hour' | 'day') => {
+        if (unit === 'hour') return t.hours;
+        if (unit === 'day') return t.days;
+        return t.minutes;
+    };
+
+    const getRecurrenceLabel = (recurrence?: Task['recurrence'], intervalValue?: number, intervalUnit?: Task['intervalUnit']) => {
+        if (recurrence === 'daily') return t.daily;
+        if (recurrence === 'weekly') return t.weekly;
+        if (recurrence === 'monthly') return t.monthly;
+        if (recurrence === 'interval') {
+            return `${t.interval}: ${intervalValue}${getIntervalUnitLabel(intervalUnit)}`;
+        }
+        return t.once;
+    };
 
     const resetForm = () => {
         setNewTask({ ...initialNewTask });
+        setSelectedTargets([]);
         setIsEditing(false);
     };
 
@@ -63,7 +88,10 @@ export const TasksView: React.FC<TasksViewProps> = ({
         e.preventDefault();
         const contentArray = newTask.content?.filter(line => line.trim() !== '') || [];
         
-        if (!newTask.targetId || contentArray.length === 0) return;
+        if (selectedTargets.length === 0 || contentArray.length === 0) {
+            showToast('请选择目标并输入内容', 'error');
+            return;
+        }
     
         // Calculate Schedule Time based on Recurrence
         let finalScheduleTime = newTask.scheduleTime;
@@ -92,34 +120,47 @@ export const TasksView: React.FC<TasksViewProps> = ({
             }
             finalScheduleTime = nextRun.toISOString();
         } else {
-            if (!finalScheduleTime) return;
+            // Recurrence is once
+            if (!finalScheduleTime) {
+                 // If no time specified for 'once', assume immediate (or required field handles it)
+                 // But <input type="datetime-local" required /> should handle it.
+                 // If logic falls here, it might be empty.
+                 return;
+            }
         }
     
-        let targetName = 'Unknown';
-        if (newTask.targetType === 'group') {
-            targetName = groups.find(g => g.id === newTask.targetId)?.topic || 'Unknown';
-        } else {
-            targetName = contacts.find(c => c.id === newTask.targetId)?.name || 'Unknown';
-        }
-        
         try {
-          if (isEditing && newTask.id) {
-              await axios.put(`/api/tasks/${newTask.id}`, {
-                  ...newTask,
-                  content: contentArray,
-                  scheduleTime: finalScheduleTime,
-                  targetName
-              });
-              showToast('任务更新成功', 'success');
-          } else {
-              await axios.post('/api/tasks', {
-                  ...newTask,
-                  content: contentArray,
-                  scheduleTime: finalScheduleTime,
-                  targetName
-              });
-              showToast('任务创建成功', 'success');
-          }
+            if (isEditing && newTask.id) {
+                // Editing mode - only supports single task editing (the one selected)
+                // We assume in editing mode, selectedTargets has exactly 1 item (the task's target)
+                // If user selected more, it's ambiguous. But let's support updating the current task's target if changed.
+                // Actually, batch update is complex. Let's restrict editing to single target.
+                const target = selectedTargets[0];
+                await axios.put(`/api/tasks/${newTask.id}`, {
+                    ...newTask,
+                    content: contentArray,
+                    scheduleTime: finalScheduleTime,
+                    targetType: target.type,
+                    targetId: target.id,
+                    targetName: target.name
+                });
+                showToast('任务更新成功', 'success');
+            } else {
+                // Batch Creation
+                let count = 0;
+                for (const target of selectedTargets) {
+                    await axios.post('/api/tasks', {
+                        ...newTask,
+                        content: contentArray,
+                        scheduleTime: finalScheduleTime,
+                        targetType: target.type,
+                        targetId: target.id,
+                        targetName: target.name
+                    });
+                    count++;
+                }
+                showToast(`成功创建 ${count} 个任务`, 'success');
+            }
           
           await fetchTasks();
           resetForm();
@@ -135,13 +176,20 @@ export const TasksView: React.FC<TasksViewProps> = ({
         
         setNewTask({
             ...task,
-            contentStr: task.content.join('\n'),
+            content: task.content.length > 0 ? task.content : [''],
             uiTime: `${hours}:${minutes}`,
             uiWeekday: task.recurrence === 'weekly' ? (date.getDay() === 0 ? '7' : date.getDay().toString()) : '1',
             uiDayOfMonth: date.getDate().toString(),
             intervalValue: task.intervalValue || 30,
             intervalUnit: task.intervalUnit || 'minute'
         });
+        
+        setSelectedTargets([{
+            type: task.targetType,
+            id: task.targetId,
+            name: task.targetName
+        }]);
+
         setIsEditing(true);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
@@ -200,37 +248,80 @@ export const TasksView: React.FC<TasksViewProps> = ({
                   )}
               </div>
               <form onSubmit={createTask} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.targetType}</label>
-                  <select 
-                    value={newTask.targetType}
-                    onChange={e => setNewTask({...newTask, targetType: e.target.value as 'group' | 'contact', targetId: ''})}
-                    className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                  >
-                    <option value="group">{t.group}</option>
-                    <option value="contact">{t.contact}</option>
-                  </select>
-                </div>
+                {!isEditing && (
+                    <div className="md:col-span-2">
+                         <label className="block text-sm font-medium text-gray-700 mb-1">{t.loadFromTemplate}</label>
+                         <select 
+                            onChange={e => {
+                                const tplId = e.target.value;
+                                if (!tplId) return;
+                                const tpl = templates.find(t => t.id === tplId);
+                                if (tpl) {
+                                    setNewTask(prev => ({
+                                        ...prev,
+                                        content: tpl.content,
+                                        recurrence: tpl.recurrence,
+                                        intervalValue: tpl.intervalValue ?? prev.intervalValue,
+                                        intervalUnit: tpl.intervalUnit ?? prev.intervalUnit,
+                                        uiTime: tpl.uiTime ?? prev.uiTime,
+                                        uiWeekday: tpl.uiWeekday ?? prev.uiWeekday,
+                                        uiDayOfMonth: tpl.uiDayOfMonth ?? prev.uiDayOfMonth
+                                    }));
+                                }
+                            }}
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
+                         >
+                             <option value="">{t.selectTemplate}</option>
+                             {templates.map(tpl => (
+                                 <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+                             ))}
+                         </select>
+                    </div>
+                )}
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.selectTarget}</label>
-                  <select 
-                    value={newTask.targetId}
-                    onChange={e => setNewTask({...newTask, targetId: e.target.value})}
-                    className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                    required
-                  >
-                    <option value="">{t.select}</option>
-                    {newTask.targetType === 'group' ? (
-                        groups.map(g => (
-                            <option key={g.id} value={g.id}>{g.topic}</option>
-                        ))
-                    ) : (
-                        contacts.map(c => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
-                        ))
-                    )}
-                  </select>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.selectTargets}</label>
+                  <div className="max-h-48 overflow-y-auto border border-gray-300 rounded p-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {groups.map(g => (
+                        <label key={g.id} className="flex items-center space-x-2 p-1 hover:bg-gray-50 rounded cursor-pointer">
+                            <input 
+                                type="checkbox"
+                                checked={selectedTargets.some(t => t.id === g.id)}
+                                onChange={e => {
+                                    const target = { type: 'group' as const, id: g.id, name: g.topic };
+                                    setSelectedTargets(prev => 
+                                        e.target.checked 
+                                            ? [...prev, target]
+                                            : prev.filter(t => t.id !== g.id)
+                                    );
+                                }}
+                                className="rounded text-green-600 focus:ring-green-500"
+                            />
+                            <span className="text-sm truncate">{g.topic}</span>
+                            <span className="text-xs text-gray-400">({t.group})</span>
+                        </label>
+                    ))}
+                    {contacts.map(c => (
+                        <label key={c.id} className="flex items-center space-x-2 p-1 hover:bg-gray-50 rounded cursor-pointer">
+                            <input 
+                                type="checkbox"
+                                checked={selectedTargets.some(t => t.id === c.id)}
+                                onChange={e => {
+                                    const target = { type: 'contact' as const, id: c.id, name: c.name };
+                                    setSelectedTargets(prev => 
+                                        e.target.checked 
+                                            ? [...prev, target]
+                                            : prev.filter(t => t.id !== c.id)
+                                    );
+                                }}
+                                className="rounded text-green-600 focus:ring-green-500"
+                            />
+                            <span className="text-sm truncate">{c.name}</span>
+                            <span className="text-xs text-gray-400">({t.contact})</span>
+                        </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">已选择 {selectedTargets.length} 个对象</p>
                 </div>
                 
                 <div className="md:col-span-2">
@@ -513,8 +604,8 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                     <td className="p-4">
                                         <span className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-700">
                                             {task.recurrence === 'interval' 
-                                                ? `${t.interval}: ${task.intervalValue}${t[task.intervalUnit + 's'] || task.intervalUnit}`
-                                                : t[task.recurrence || 'once']}
+                                                ? `${t.interval}: ${task.intervalValue}${getIntervalUnitLabel(task.intervalUnit)}`
+                                                : getRecurrenceLabel(task.recurrence)}
                                         </span>
                                     </td>
                                     <td className="p-4">
@@ -621,8 +712,8 @@ export const TasksView: React.FC<TasksViewProps> = ({
                             <div className="flex justify-between items-center pt-2 border-t border-gray-100">
                                 <span className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-600">
                                     {task.recurrence === 'interval' 
-                                        ? `${t.interval}: ${task.intervalValue}${t[task.intervalUnit + 's'] || task.intervalUnit}`
-                                        : t[task.recurrence || 'once']}
+                                        ? `${t.interval}: ${task.intervalValue}${getIntervalUnitLabel(task.intervalUnit)}`
+                                        : getRecurrenceLabel(task.recurrence)}
                                 </span>
                                 <div className="flex gap-3">
                                     <button onClick={() => editTask(task)} className="p-2 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100">
