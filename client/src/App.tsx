@@ -267,20 +267,6 @@ function App() {
 
   const [newTask, setNewTask] = useState(initialNewTask);
 
-  const resetAppState = () => {
-    setActiveTab('dashboard');
-    setBotStatus({ status: 'offline' });
-    setQrCode(null);
-    setGroups([]);
-    setContacts([]);
-    setTasks([]);
-    setLogs([]);
-    setSearchQuery('');
-    setTaskFilter('all');
-    setIsRestarting(false);
-    resetForm();
-  };
-
   const [searchQuery, setSearchQuery] = useState('');
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
   const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'success' | 'failed'>('all');
