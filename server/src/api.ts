@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import { BotManager } from './botManager.js';
-import { DBManager, Task, addLog } from './dbManager.js';
+import { DBManager, Task, addLog, Template } from './dbManager.js';
 import { UserManager } from './userManager.js';
 import { authenticateToken, generateToken, AuthRequest } from './authMiddleware.js';
 
@@ -171,6 +171,85 @@ apiRouter.get('/contacts', async (req, res) => {
     }
 });
 
+// Template Management
+apiRouter.get('/templates', async (req, res) => {
+    try {
+        const user = (req as AuthRequest).user!;
+        const db = await DBManager.getDb(user);
+        res.json(db.data.templates || []);
+    } catch (e) {
+        handleError(res, e);
+    }
+});
+
+apiRouter.post('/templates', async (req, res) => {
+    try {
+        const user = (req as AuthRequest).user!;
+        const db = await DBManager.getDb(user);
+        
+        const template: Template = {
+            id: Date.now().toString(),
+            ...req.body,
+            createdAt: new Date().toISOString()
+        };
+        
+        await db.update(({ templates }) => {
+            if (!templates) templates = [];
+            templates.push(template);
+        });
+        
+        await addLog(user, 'info', `Created template ${template.name}`);
+        res.json(template);
+    } catch (e) {
+        handleError(res, e);
+    }
+});
+
+apiRouter.put('/templates/:id', async (req, res) => {
+    try {
+        const user = (req as AuthRequest).user!;
+        const db = await DBManager.getDb(user);
+        const { id } = req.params;
+        const updates = req.body;
+        
+        let updated: Template | null = null;
+        await db.update(({ templates }) => {
+            const index = templates.findIndex(t => t.id === id);
+            if (index > -1) {
+                templates[index] = { ...templates[index], ...updates, id };
+                updated = templates[index];
+            }
+        });
+        
+        if (updated) {
+            await addLog(user, 'info', `Updated template ${id}`);
+            res.json(updated);
+        } else {
+            res.status(404).json({ error: 'Template not found' });
+        }
+    } catch (e) {
+        handleError(res, e);
+    }
+});
+
+apiRouter.delete('/templates/:id', async (req, res) => {
+    try {
+        const user = (req as AuthRequest).user!;
+        const db = await DBManager.getDb(user);
+        const { id } = req.params;
+        
+        await db.update(({ templates }) => {
+            const index = templates.findIndex(t => t.id === id);
+            if (index > -1) templates.splice(index, 1);
+        });
+        
+        await addLog(user, 'info', `Deleted template ${id}`);
+        res.json({ success: true });
+    } catch (e) {
+        handleError(res, e);
+    }
+});
+
 // Tasks
 apiRouter.get('/tasks', async (req, res) => {
     try {
@@ -231,6 +310,45 @@ apiRouter.put('/tasks/:id', async (req, res) => {
         } else {
             res.status(404).json({ error: 'Task not found' });
         }
+    } catch (e) {
+        handleError(res, e);
+    }
+});
+
+apiRouter.delete('/tasks/batch-delete', async (req, res) => {
+    try {
+        const user = (req as AuthRequest).user!;
+        const db = await DBManager.getDb(user);
+        const { ids } = req.body;
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: 'Invalid or empty ids array' });
+        }
+        
+        let deletedCount = 0;
+        await db.update(({ tasks }) => {
+            const initialLength = tasks.length;
+            // Filter out tasks that are in the ids list
+            const newTasks = tasks.filter(t => !ids.includes(t.id));
+            deletedCount = initialLength - newTasks.length;
+            
+            // Re-assign tasks array (lowdb requires modifying the array in place or reassigning property)
+            // But since tasks is a reference from the callback, we can't just reassign `tasks = ...` if it's destructured.
+            // Wait, lowdb update callback receives data object or part of it.
+            // If we destructure `({ tasks })`, we can modify `tasks`.
+            // `tasks.splice(...)` works.
+            // To do batch delete efficiently with splice is tricky.
+            // Better to use filter and reassign if possible, or splice one by one backwards.
+            for (let i = tasks.length - 1; i >= 0; i--) {
+                if (ids.includes(tasks[i].id)) {
+                    tasks.splice(i, 1);
+                }
+            }
+        });
+        
+        await addLog(user, 'info', `Batch deleted ${deletedCount} tasks from ${ip}`);
+        res.json({ success: true, count: deletedCount });
     } catch (e) {
         handleError(res, e);
     }

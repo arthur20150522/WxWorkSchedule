@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
-import { QrCode, Users, MessageSquare, List, RefreshCw, Trash2, CheckCircle, XCircle, FileText, Bug, Terminal } from 'lucide-react';
+import { QrCode, Users, MessageSquare, List, RefreshCw, Trash2, CheckCircle, XCircle, FileText, Bug, Terminal, Layout } from 'lucide-react';
 import clsx from 'clsx';
 
 // Types
@@ -11,9 +11,17 @@ import clsx from 'clsx';
     user?: { name: string; id: string };
     loginTime?: string;
   }
+
+  interface Template {
+      id: string;
+      name: string;
+      type: 'text' | 'image' | 'file';
+      content: string;
+      targets: { type: 'group' | 'contact', id: string, name: string }[];
+      createdAt: string;
+  }
   
   // Loading State
-  const [isStatusLoading, setIsStatusLoading] = useState(true);
 
 interface ToastMsg {
     id: string;
@@ -68,6 +76,7 @@ const t: any = {
     invalidPassword: "密码错误",
     dashboard: "概览",
     groups: "群组管理",
+    templates: "模板管理",
     tasks: "任务管理",
     logs: "系统日志",
     botStatus: "机器人状态",
@@ -141,20 +150,33 @@ const t: any = {
      startTime: "开始时间",
      loginDuration: "已登录时长",
      durationFormat: "{days}天 {hours}小时 {minutes}分",
+     createTemplate: "创建模板",
+     templateName: "模板名称",
+     associatedTargets: "关联对象",
+     selectTargets: "选择关联对象 (可多选)",
+     quickGenerate: "快速生成任务",
+     templateList: "模板列表",
+     noTemplates: "暂无模板",
+     applyTemplate: "应用模板",
+     batchDelete: "批量删除",
+     selected: "已选择",
+     items: "项",
  };
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'groups' | 'tasks' | 'logs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'groups' | 'templates' | 'tasks' | 'logs'>('dashboard');
   const [botStatus, setBotStatus] = useState<BotStatus>({ status: 'offline' });
   const [isStatusLoading, setIsStatusLoading] = useState(true);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [contacts, setContacts] = useState<{id: string, name: string}[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [logs, setLogs] = useState<Log[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [isRestarting, setIsRestarting] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     title: string;
@@ -353,6 +375,15 @@ function App() {
     }
   };
 
+  const fetchTemplates = async () => {
+    try {
+      const res = await axios.get('/api/templates');
+      setTemplates(res.data);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const fetchLogs = async () => {
       try {
           const res = await axios.get('/api/logs');
@@ -380,6 +411,112 @@ function App() {
             }
         }
     });
+  };
+
+  const [isTemplateEditing, setIsTemplateEditing] = useState(false);
+  const [newTemplate, setNewTemplate] = useState<Partial<Template>>({
+      name: '',
+      type: 'text',
+      content: '',
+      targets: []
+  });
+
+  const createTemplate = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!newTemplate.name || !newTemplate.content || (newTemplate.targets?.length === 0)) {
+          showToast('请填写完整模板信息', 'error');
+          return;
+      }
+
+      try {
+          if (isTemplateEditing && newTemplate.id) {
+              await axios.put(`/api/templates/${newTemplate.id}`, newTemplate);
+              showToast('模板更新成功', 'success');
+          } else {
+              await axios.post('/api/templates', newTemplate);
+              showToast('模板创建成功', 'success');
+          }
+          fetchTemplates();
+          setIsTemplateEditing(false);
+          setNewTemplate({ name: '', type: 'text', content: '', targets: [] });
+      } catch (e) {
+          showToast('操作失败', 'error');
+      }
+  };
+
+  const deleteTemplate = async (id: string) => {
+      if (!window.confirm(t.deleteConfirm)) return;
+      try {
+          await axios.delete(`/api/templates/${id}`);
+          fetchTemplates();
+          showToast('删除成功', 'success');
+      } catch (e) {
+          showToast('删除失败', 'error');
+      }
+  };
+
+  const generateFromTemplate = async (template: Template) => {
+      // Open task creation with template data
+      setNewTask({
+          ...initialNewTask,
+          content: template.content,
+          type: template.type,
+          // If we want to support multi-target generation in one go, we need backend support or loop here.
+          // Requirement says "Quick generate task instance".
+          // If template has multiple targets, we should probably iterate.
+      });
+      // But user might want to set time.
+      // Better: A "Quick Schedule" modal or just pre-fill the form.
+      // If template has targets, pre-fill them?
+      // Task form only supports single target currently.
+      // Let's implement "Batch Generate" logic:
+      // Loop through template targets and call create API for each.
+      
+      if (!template.targets || template.targets.length === 0) {
+          showToast('模板未关联目标', 'error');
+          return;
+      }
+
+      const scheduleTime = prompt('请输入发送时间 (YYYY-MM-DDTHH:mm) 或留空立即发送');
+      if (scheduleTime === null) return; // Cancelled
+      
+      const finalTime = scheduleTime ? new Date(scheduleTime).toISOString() : new Date().toISOString();
+      
+      try {
+          let count = 0;
+          for (const target of template.targets) {
+              await axios.post('/api/tasks', {
+                  type: template.type,
+                  content: template.content,
+                  targetType: target.type,
+                  targetId: target.id,
+                  targetName: target.name,
+                  scheduleTime: finalTime,
+                  recurrence: 'once',
+                  templateId: template.id
+              });
+              count++;
+          }
+          showToast(`成功生成 ${count} 个任务`, 'success');
+          fetchTasks();
+          setActiveTab('tasks');
+      } catch (e) {
+          showToast('生成任务失败', 'error');
+      }
+  };
+
+  const batchDeleteTasks = async () => {
+      if (selectedTaskIds.size === 0) return;
+      if (!window.confirm(`确定要删除选中的 ${selectedTaskIds.size} 个任务吗？`)) return;
+      
+      try {
+          await axios.delete('/api/tasks/batch-delete', { data: { ids: Array.from(selectedTaskIds) } });
+          setSelectedTaskIds(new Set());
+          fetchTasks();
+          showToast('批量删除成功', 'success');
+      } catch (e) {
+          showToast('批量删除失败', 'error');
+      }
   };
 
   const [isEditing, setIsEditing] = useState(false);
@@ -520,6 +657,12 @@ function App() {
     // Auto fetch tasks when switching to tasks tab
     if (activeTab === 'tasks') {
         fetchTasks();
+    }
+    
+    if (activeTab === 'templates') {
+        fetchTemplates();
+        fetchGroups();
+        fetchContacts();
     }
     
     if (botStatus.status === 'logged_in' && botStatus.ready) {
@@ -685,6 +828,7 @@ function App() {
           {[
             { id: 'dashboard', label: t.dashboard, icon: QrCode },
             { id: 'groups', label: t.groups, icon: Users },
+            { id: 'templates', label: t.templates, icon: Layout },
             { id: 'tasks', label: t.tasks, icon: List },
             { id: 'logs', label: t.logs, icon: FileText },
           ].map(item => (
@@ -766,20 +910,6 @@ function App() {
             <h1 className="text-2xl font-bold text-gray-800">{t.botStatus}</h1>
             
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
-              <div className={clsx(
-                "inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium mb-4",
-                botStatus.status === 'logged_in' ? "bg-green-100 text-green-800" :
-                botStatus.status === 'waiting_for_scan' ? "bg-yellow-100 text-yellow-800" :
-                "bg-gray-100 text-gray-800"
-              )}>
-                {botStatus.status === 'logged_in' && <CheckCircle className="w-4 h-4" />}
-                {botStatus.status === 'waiting_for_scan' && <RefreshCw className="w-4 h-4 animate-spin" />}
-                {botStatus.status === 'offline' && <XCircle className="w-4 h-4" />}
-                {botStatus.status === 'logged_in' ? t.loggedIn : 
-               botStatus.status === 'waiting_for_scan' ? t.waitingForScan : 
-               t.offline}
-            </div>
-
             {isStatusLoading ? (
                 <div className="flex flex-col items-center justify-center py-12">
                     <RefreshCw className="w-8 h-8 animate-spin text-green-500 mb-4" />
@@ -787,6 +917,20 @@ function App() {
                 </div>
             ) : (
               <>
+                <div className={clsx(
+                  "inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium mb-4",
+                  botStatus.status === 'logged_in' ? "bg-green-100 text-green-800" :
+                  botStatus.status === 'waiting_for_scan' ? "bg-yellow-100 text-yellow-800" :
+                  "bg-gray-100 text-gray-800"
+                )}>
+                  {botStatus.status === 'logged_in' && <CheckCircle className="w-4 h-4" />}
+                  {botStatus.status === 'waiting_for_scan' && <RefreshCw className="w-4 h-4 animate-spin" />}
+                  {botStatus.status === 'offline' && <XCircle className="w-4 h-4" />}
+                  {botStatus.status === 'logged_in' ? t.loggedIn : 
+                 botStatus.status === 'waiting_for_scan' ? t.waitingForScan : 
+                 t.offline}
+                </div>
+
                 {botStatus.status === 'logged_in' && botStatus.user && (
                     <div className="space-y-2">
                         <div className="text-lg">
@@ -882,6 +1026,141 @@ function App() {
                 </div>
              )}
           </div>
+        )}
+
+        {activeTab === 'templates' && (
+            <div className="space-y-8">
+                {/* Template Form */}
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-lg font-bold">{isTemplateEditing ? '编辑模板' : t.createTemplate}</h2>
+                        {isTemplateEditing && (
+                            <button onClick={() => {
+                                setIsTemplateEditing(false);
+                                setNewTemplate({ name: '', type: 'text', content: '', targets: [] });
+                            }} className="text-sm text-gray-500 hover:text-gray-700">取消</button>
+                        )}
+                    </div>
+                    <form onSubmit={createTemplate} className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">{t.templateName}</label>
+                            <input 
+                                type="text" 
+                                value={newTemplate.name}
+                                onChange={e => setNewTemplate({...newTemplate, name: e.target.value})}
+                                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">{t.messageType}</label>
+                            <select 
+                                value={newTemplate.type}
+                                onChange={e => setNewTemplate({...newTemplate, type: e.target.value as any})}
+                                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
+                            >
+                                <option value="text">{t.text}</option>
+                                <option value="image">{t.image}</option>
+                                <option value="file">{t.file}</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">{t.content}</label>
+                            <textarea 
+                                value={newTemplate.content}
+                                onChange={e => setNewTemplate({...newTemplate, content: e.target.value})}
+                                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
+                                rows={3}
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">{t.selectTargets}</label>
+                            <div className="max-h-48 overflow-y-auto border border-gray-300 rounded p-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                                {groups.map(g => (
+                                    <label key={g.id} className="flex items-center space-x-2 p-1 hover:bg-gray-50 rounded cursor-pointer">
+                                        <input 
+                                            type="checkbox"
+                                            checked={newTemplate.targets?.some(t => t.id === g.id)}
+                                            onChange={e => {
+                                                const target = { type: 'group' as const, id: g.id, name: g.topic };
+                                                setNewTemplate(prev => ({
+                                                    ...prev,
+                                                    targets: e.target.checked 
+                                                        ? [...(prev.targets || []), target]
+                                                        : (prev.targets || []).filter(t => t.id !== g.id)
+                                                }));
+                                            }}
+                                            className="rounded text-green-600 focus:ring-green-500"
+                                        />
+                                        <span className="text-sm truncate">{g.topic}</span>
+                                        <span className="text-xs text-gray-400">({t.group})</span>
+                                    </label>
+                                ))}
+                                {contacts.map(c => (
+                                    <label key={c.id} className="flex items-center space-x-2 p-1 hover:bg-gray-50 rounded cursor-pointer">
+                                        <input 
+                                            type="checkbox"
+                                            checked={newTemplate.targets?.some(t => t.id === c.id)}
+                                            onChange={e => {
+                                                const target = { type: 'contact' as const, id: c.id, name: c.name };
+                                                setNewTemplate(prev => ({
+                                                    ...prev,
+                                                    targets: e.target.checked 
+                                                        ? [...(prev.targets || []), target]
+                                                        : (prev.targets || []).filter(t => t.id !== c.id)
+                                                }));
+                                            }}
+                                            className="rounded text-green-600 focus:ring-green-500"
+                                        />
+                                        <span className="text-sm truncate">{c.name}</span>
+                                        <span className="text-xs text-gray-400">({t.contact})</span>
+                                    </label>
+                                ))}
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">已选择 {newTemplate.targets?.length || 0} 个对象</p>
+                        </div>
+                        <button type="submit" className="w-full py-2 bg-green-600 text-white rounded hover:bg-green-700">
+                            {isTemplateEditing ? '更新模板' : '创建模板'}
+                        </button>
+                    </form>
+                </div>
+
+                {/* Template List */}
+                <div className="space-y-4">
+                    <h2 className="text-lg font-bold">{t.templateList}</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {templates.map(tpl => (
+                            <div key={tpl.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                                <div className="flex justify-between items-start mb-2">
+                                    <h3 className="font-bold text-lg">{tpl.name}</h3>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => generateFromTemplate(tpl)} className="text-green-600 hover:text-green-800" title={t.quickGenerate}>
+                                            <RefreshCw className="w-5 h-5" />
+                                        </button>
+                                        <button onClick={() => {
+                                            setNewTemplate(tpl);
+                                            setIsTemplateEditing(true);
+                                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                                        }} className="text-blue-600 hover:text-blue-800">
+                                            <FileText className="w-5 h-5" />
+                                        </button>
+                                        <button onClick={() => deleteTemplate(tpl.id)} className="text-red-600 hover:text-red-800">
+                                            <Trash2 className="w-5 h-5" />
+                                        </button>
+                                    </div>
+                                </div>
+                                <p className="text-gray-600 text-sm mb-2 line-clamp-2">{tpl.content}</p>
+                                <div className="flex items-center gap-2 text-xs text-gray-500">
+                                    <span className="bg-gray-100 px-2 py-1 rounded">{tpl.type}</span>
+                                    <span>关联 {tpl.targets.length} 个对象</span>
+                                </div>
+                            </div>
+                        ))}
+                        {templates.length === 0 && <div className="col-span-2 text-center text-gray-500 py-8">{t.noTemplates}</div>}
+                    </div>
+                </div>
+            </div>
         )}
 
         {activeTab === 'tasks' && (
@@ -1112,6 +1391,15 @@ function App() {
                 <div className="flex flex-col md:flex-row justify-between items-center gap-4">
                     <h2 className="text-lg font-bold">{t.scheduledTasks}</h2>
                     <div className="flex items-center gap-2 w-full md:w-auto">
+                        {selectedTaskIds.size > 0 && (
+                            <button 
+                                onClick={batchDeleteTasks}
+                                className="px-3 py-2 bg-red-100 text-red-600 rounded hover:bg-red-200 text-sm font-medium flex items-center gap-1"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                                {t.batchDelete} ({selectedTaskIds.size})
+                            </button>
+                        )}
                         <input 
                             type="text" 
                             placeholder="搜索任务内容/目标..."
@@ -1139,6 +1427,20 @@ function App() {
                     <table className="w-full text-left text-sm">
                         <thead className="bg-gray-50 text-gray-500">
                             <tr>
+                                <th className="p-4 w-10">
+                                    <input 
+                                        type="checkbox"
+                                        checked={filteredTasks.length > 0 && selectedTaskIds.size === filteredTasks.length}
+                                        onChange={e => {
+                                            if (e.target.checked) {
+                                                setSelectedTaskIds(new Set(filteredTasks.map(t => t.id)));
+                                            } else {
+                                                setSelectedTaskIds(new Set());
+                                            }
+                                        }}
+                                        className="rounded text-green-600 focus:ring-green-500"
+                                    />
+                                </th>
                                 <th className="p-4">{t.target}</th>
                                 <th className="p-4">{t.content}</th>
                                 <th className="p-4">{t.scheduleTime}</th>
@@ -1150,6 +1452,22 @@ function App() {
                         <tbody className="divide-y divide-gray-100">
                             {filteredTasks.map(task => (
                                 <tr key={task.id} className="hover:bg-gray-50">
+                                    <td className="p-4">
+                                        <input 
+                                            type="checkbox"
+                                            checked={selectedTaskIds.has(task.id)}
+                                            onChange={e => {
+                                                const newSet = new Set(selectedTaskIds);
+                                                if (e.target.checked) {
+                                                    newSet.add(task.id);
+                                                } else {
+                                                    newSet.delete(task.id);
+                                                }
+                                                setSelectedTaskIds(newSet);
+                                            }}
+                                            className="rounded text-green-600 focus:ring-green-500"
+                                        />
+                                    </td>
                                     <td className="p-4 font-medium">{task.targetName}</td>
                                     <td className="p-4 truncate max-w-xs">{task.content}</td>
                                     <td className="p-4">{new Date(task.scheduleTime).toLocaleString()}</td>
@@ -1184,7 +1502,7 @@ function App() {
                             ))}
                             {filteredTasks.length === 0 && (
                                 <tr>
-                                    <td colSpan={6} className="p-8 text-center text-gray-500">
+                                    <td colSpan={7} className="p-8 text-center text-gray-500">
                                         {tasks.length === 0 ? t.noTasks : '没有找到匹配的任务'}
                                     </td>
                                 </tr>

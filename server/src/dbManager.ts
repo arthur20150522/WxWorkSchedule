@@ -3,8 +3,18 @@ import { Low } from 'lowdb';
 import path from 'path';
 import { UserManager } from './userManager.js';
 
+export interface Template {
+  id: string;
+  name: string;
+  type: 'text' | 'image' | 'file';
+  content: string;
+  targets: { type: 'group' | 'contact', id: string, name: string }[]; // Associated targets
+  createdAt: string;
+}
+
 export interface Task {
   id: string;
+  templateId?: string; // Optional reference to template
   type: 'text' | 'image' | 'file';
   targetType: 'group' | 'contact';
   targetId: string; // Group ID or Contact ID
@@ -16,23 +26,25 @@ export interface Task {
   intervalUnit?: 'minute' | 'hour' | 'day'; // e.g. 'minute'
   status: 'pending' | 'success' | 'failed';
   createdAt: string;
+  updatedAt?: string;
   error?: string;
 }
 
 export interface Log {
   id: string;
   timestamp: string;
-  level: 'info' | 'error';
+  level: 'info' | 'error' | 'warn';
   message: string;
   taskId?: string;
 }
 
 export interface Data {
   tasks: Task[];
+  templates: Template[];
   logs: Log[];
 }
 
-const defaultData: Data = { tasks: [], logs: [] };
+const defaultData: Data = { tasks: [], templates: [], logs: [] };
 
 export class DBManager {
     private static instances: Map<string, Low<Data>> = new Map();
