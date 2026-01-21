@@ -7,7 +7,7 @@ export interface Template {
   id: string;
   name: string;
   type: 'text';
-  content: string;
+  content: string[];
   targets: { type: 'group' | 'contact', id: string, name: string }[]; // Associated targets
   createdAt: string;
 }
@@ -19,7 +19,8 @@ export interface Task {
   targetType: 'group' | 'contact';
   targetId: string; // Group ID or Contact ID
   targetName: string; // For display
-  content: string; // Text content or file path
+  content: string[]; // Text content list
+  currentContentIndex?: number; // Index of current content to send
   scheduleTime: string; // ISO String
   recurrence?: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
   intervalValue?: number; // e.g. 30

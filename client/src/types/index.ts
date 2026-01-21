@@ -35,19 +35,20 @@ export interface BotStatus {
   }
   
   export interface Task {
-    id: string;
-    type: 'text';
-    targetType: 'group' | 'contact';
-    targetId: string;
-    targetName: string;
-    content: string;
-    scheduleTime: string;
-    status: 'pending' | 'success' | 'failed';
-    error?: string;
-    recurrence?: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
-    intervalValue?: number;
-    intervalUnit?: 'minute' | 'hour' | 'day';
-  }
+  id: string;
+  type: 'text';
+  targetType: 'group' | 'contact';
+  targetId: string;
+  targetName: string;
+  content: string[];
+  currentContentIndex?: number;
+  scheduleTime: string;
+  status: 'pending' | 'success' | 'failed';
+  error?: string;
+  recurrence?: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
+  intervalValue?: number;
+  intervalUnit?: 'minute' | 'hour' | 'day';
+}
   
   export interface Log {
     id: string;

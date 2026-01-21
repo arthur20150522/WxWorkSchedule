@@ -24,13 +24,11 @@ export const TasksView: React.FC<TasksViewProps> = ({
       uiDayOfMonth: string;
       intervalValue: number;
       intervalUnit: 'minute' | 'hour' | 'day';
-      contentStr: string; // Helper for textarea input
     } = {
       type: 'text',
       targetType: 'group',
       targetId: '',
-      content: [],
-      contentStr: '',
+      content: [''],
       scheduleTime: '', 
       recurrence: 'once',
       uiTime: '09:00',
@@ -47,7 +45,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
             setNewTask(prev => ({ 
                 ...prev, 
                 ...initialDraft,
-                contentStr: initialDraft.content ? initialDraft.content.join('\n') : ''
+                content: initialDraft.content && initialDraft.content.length > 0 ? initialDraft.content : ['']
             }));
         }
     }, [initialDraft]);
@@ -63,7 +61,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
     const createTask = async (e: React.FormEvent) => {
         e.preventDefault();
-        const contentArray = newTask.contentStr.split('\n').filter(line => line.trim() !== '');
+        const contentArray = newTask.content?.filter(line => line.trim() !== '') || [];
         
         if (!newTask.targetId || contentArray.length === 0) return;
     
@@ -236,15 +234,43 @@ export const TasksView: React.FC<TasksViewProps> = ({
                 </div>
                 
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.content} (每行一条消息)</label>
-                  <textarea 
-                    value={newTask.contentStr}
-                    onChange={e => setNewTask({...newTask, contentStr: e.target.value})}
-                    className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                    rows={5}
-                    required
-                    placeholder="Hello world...&#10;Second message...&#10;Third message..."
-                  />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.content} (支持多条消息，循环发送)</label>
+                  <div className="space-y-2">
+                    {newTask.content?.map((item, index) => (
+                        <div key={index} className="flex gap-2 items-start">
+                            <span className="mt-2 text-xs text-gray-400 w-4">{index + 1}.</span>
+                            <textarea 
+                                value={item}
+                                onChange={e => {
+                                    const newContent = [...(newTask.content || [])];
+                                    newContent[index] = e.target.value;
+                                    setNewTask({...newTask, content: newContent});
+                                }}
+                                className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                                rows={2}
+                                placeholder="输入消息内容..."
+                            />
+                            <button 
+                                type="button"
+                                onClick={() => {
+                                    const newContent = newTask.content?.filter((_, i) => i !== index);
+                                    setNewTask({...newTask, content: newContent?.length ? newContent : ['']});
+                                }}
+                                className="mt-1 p-2 text-red-500 hover:bg-red-50 rounded"
+                                title="删除此条"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        </div>
+                    ))}
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setNewTask({...newTask, content: [...(newTask.content || []), '']})}
+                    className="mt-2 text-sm text-green-600 hover:text-green-700 font-medium flex items-center gap-1"
+                  >
+                    + 添加下一条消息
+                  </button>
                 </div>
 
                 <div>
@@ -583,7 +609,13 @@ export const TasksView: React.FC<TasksViewProps> = ({
                             </div>
                             
                             <div className="bg-gray-50 p-3 rounded-lg text-sm text-gray-700 break-words">
-                                {task.content}
+                                {Array.isArray(task.content) ? (
+                                    <ul className="list-decimal list-inside space-y-1">
+                                        {task.content.map((c, i) => (
+                                            <li key={i} className="line-clamp-2">{c}</li>
+                                        ))}
+                                    </ul>
+                                ) : task.content}
                             </div>
 
                             <div className="flex justify-between items-center pt-2 border-t border-gray-100">

@@ -17,17 +17,16 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
     templates, fetchTemplates, groups, contacts, showToast, onGenerateTask 
 }) => {
     const [isTemplateEditing, setIsTemplateEditing] = useState(false);
-    const [newTemplate, setNewTemplate] = useState<Partial<Template> & { contentStr: string }>({
+    const [newTemplate, setNewTemplate] = useState<Partial<Template>>({
         name: '',
         type: 'text',
-        content: [],
-        contentStr: '',
+        content: [''],
         targets: []
     });
 
     const createTemplate = async (e: React.FormEvent) => {
         e.preventDefault();
-        const contentArray = newTemplate.contentStr?.split('\n').filter(line => line.trim() !== '') || [];
+        const contentArray = newTemplate.content?.filter(line => line.trim() !== '') || [];
 
         if (!newTemplate.name || contentArray.length === 0 || (newTemplate.targets?.length === 0)) {
             showToast('请填写完整模板信息', 'error');
@@ -35,7 +34,6 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
         }
 
         const templateData = { ...newTemplate, content: contentArray };
-        delete templateData.contentStr;
 
         try {
             if (isTemplateEditing && newTemplate.id) {
@@ -47,7 +45,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
             }
             fetchTemplates();
             setIsTemplateEditing(false);
-            setNewTemplate({ name: '', type: 'text', content: [], contentStr: '', targets: [] });
+            setNewTemplate({ name: '', type: 'text', content: [''], targets: [] });
         } catch (e) {
             showToast('操作失败', 'error');
         }
@@ -170,7 +168,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                         <button onClick={() => {
                                             setNewTemplate({
                                                 ...tpl,
-                                                contentStr: tpl.content.join('\n')
+                                                content: tpl.content.length > 0 ? tpl.content : ['']
                                             });
                                             setIsTemplateEditing(true);
                                             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -182,7 +180,11 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                         </button>
                                     </div>
                                 </div>
-                                <p className="text-gray-600 text-sm mb-2 line-clamp-2">{tpl.content}</p>
+                                <p className="text-gray-600 text-sm mb-2 line-clamp-3 whitespace-pre-line">
+                                    {Array.isArray(tpl.content) 
+                                        ? tpl.content.map((c, i) => `${i+1}. ${c}`).join('\n')
+                                        : tpl.content}
+                                </p>
                                 <div className="flex items-center gap-2 text-xs text-gray-500">
                                     <span className="bg-gray-100 px-2 py-1 rounded">{tpl.type}</span>
                                     <span>关联 {tpl.targets.length} 个对象</span>
