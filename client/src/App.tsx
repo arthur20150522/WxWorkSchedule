@@ -849,29 +849,6 @@ function App() {
         </nav>
         
         <div className="p-6 border-t border-slate-800">
-             <button 
-                onClick={() => {
-                    setConfirmDialog({
-                        isOpen: true,
-                        title: t.logout,
-                        message: '确定要退出登录吗？',
-                        onConfirm: () => {
-                             // Fire and forget logout log
-                             axios.post('/api/logout').catch((e) => console.error('Logout log failed', e));
-                             
-                             // Reset state
-                             setPassword('');
-                             setToken(null);
-                             resetAppState();
-                             setIsAuthenticated(false);
-                        }
-                    });
-                }}
-                className="w-full flex items-center gap-3 px-5 py-3.5 text-sm font-semibold text-slate-400 hover:text-red-400 hover:bg-red-950/30 rounded-xl transition-all mb-2"
-             >
-                 <XCircle className="w-5 h-5" /> {t.logout}
-             </button>
-             
              <button
                onClick={() => setShowDebug(!showDebug)}
                className={clsx(
@@ -1128,7 +1105,12 @@ function App() {
 
                 {/* Template List */}
                 <div className="space-y-4">
-                    <h2 className="text-lg font-bold">{t.templateList}</h2>
+                    <div className="flex justify-between items-center">
+                        <h2 className="text-lg font-bold">{t.templateList}</h2>
+                        <button onClick={fetchTemplates} className="p-2 hover:bg-gray-100 rounded-full" title={t.refresh}>
+                            <RefreshCw className="w-5 h-5 text-gray-600" />
+                        </button>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {templates.map(tpl => (
                             <div key={tpl.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
