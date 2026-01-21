@@ -6,7 +6,7 @@ import { UserManager } from './userManager.js';
 export interface Template {
   id: string;
   name: string;
-  type: 'text' | 'image' | 'file';
+  type: 'text';
   content: string;
   targets: { type: 'group' | 'contact', id: string, name: string }[]; // Associated targets
   createdAt: string;
@@ -15,7 +15,7 @@ export interface Template {
 export interface Task {
   id: string;
   templateId?: string; // Optional reference to template
-  type: 'text' | 'image' | 'file';
+  type: 'text';
   targetType: 'group' | 'contact';
   targetId: string; // Group ID or Contact ID
   targetName: string; // For display

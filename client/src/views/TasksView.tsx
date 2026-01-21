@@ -224,19 +224,6 @@ export const TasksView: React.FC<TasksViewProps> = ({
                   </select>
                 </div>
                 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.messageType}</label>
-                  <select 
-                    value={newTask.type}
-                    onChange={e => setNewTask({...newTask, type: e.target.value as any})}
-                    className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                  >
-                    <option value="text">{t.text}</option>
-                    <option value="image">{t.image}</option>
-                    <option value="file">{t.file}</option>
-                  </select>
-                </div>
-
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.content}</label>
                   <textarea 

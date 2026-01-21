@@ -35,7 +35,7 @@ export interface BotStatus {
   
   export interface Task {
     id: string;
-    type: 'text' | 'image' | 'file';
+    type: 'text';
     targetType: 'group' | 'contact';
     targetId: string;
     targetName: string;

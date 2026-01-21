@@ -76,12 +76,7 @@ export class TaskQueue {
             }
 
             // Send content
-            if (task.type === 'text') {
-                await target.say(task.content);
-            } else if (task.type === 'image' || task.type === 'file') {
-                const fileBox = FileBox.fromFile(task.content);
-                await target.say(fileBox);
-            }
+            await target.say(task.content);
 
             // Update status or Reschedule
             const db = await DBManager.getDb(username);
