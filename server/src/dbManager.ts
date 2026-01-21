@@ -71,6 +71,22 @@ export class DBManager {
             if (!data.logs) {
                 data.logs = [];
             }
+
+            // Migration: Convert string content to string[]
+            data.tasks.forEach((t: any) => {
+                if (typeof t.content === 'string') {
+                    t.content = [t.content];
+                }
+                if (typeof t.currentContentIndex === 'undefined') {
+                    t.currentContentIndex = 0;
+                }
+            });
+
+            data.templates.forEach((t: any) => {
+                if (typeof t.content === 'string') {
+                    t.content = [t.content];
+                }
+            });
         });
 
         this.instances.set(username, db);

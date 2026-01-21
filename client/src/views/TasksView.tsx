@@ -24,11 +24,13 @@ export const TasksView: React.FC<TasksViewProps> = ({
       uiDayOfMonth: string;
       intervalValue: number;
       intervalUnit: 'minute' | 'hour' | 'day';
+      contentStr: string; // Helper for textarea input
     } = {
       type: 'text',
       targetType: 'group',
       targetId: '',
-      content: '',
+      content: [],
+      contentStr: '',
       scheduleTime: '', 
       recurrence: 'once',
       uiTime: '09:00',
@@ -42,7 +44,11 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
     React.useEffect(() => {
         if (initialDraft) {
-            setNewTask(prev => ({ ...prev, ...initialDraft }));
+            setNewTask(prev => ({ 
+                ...prev, 
+                ...initialDraft,
+                contentStr: initialDraft.content ? initialDraft.content.join('\n') : ''
+            }));
         }
     }, [initialDraft]);
     const [isEditing, setIsEditing] = useState(false);
@@ -57,7 +63,9 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
     const createTask = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newTask.targetId || !newTask.content) return;
+        const contentArray = newTask.contentStr.split('\n').filter(line => line.trim() !== '');
+        
+        if (!newTask.targetId || contentArray.length === 0) return;
     
         // Calculate Schedule Time based on Recurrence
         let finalScheduleTime = newTask.scheduleTime;
@@ -100,6 +108,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
           if (isEditing && newTask.id) {
               await axios.put(`/api/tasks/${newTask.id}`, {
                   ...newTask,
+                  content: contentArray,
                   scheduleTime: finalScheduleTime,
                   targetName
               });
@@ -107,6 +116,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
           } else {
               await axios.post('/api/tasks', {
                   ...newTask,
+                  content: contentArray,
                   scheduleTime: finalScheduleTime,
                   targetName
               });
@@ -127,6 +137,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
         
         setNewTask({
             ...task,
+            contentStr: task.content.join('\n'),
             uiTime: `${hours}:${minutes}`,
             uiWeekday: task.recurrence === 'weekly' ? (date.getDay() === 0 ? '7' : date.getDay().toString()) : '1',
             uiDayOfMonth: date.getDate().toString(),
@@ -174,7 +185,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
     const filteredTasks = tasks
       .filter(t => taskFilter === 'all' || t.status === taskFilter)
       .filter(t => 
-          t.content.toLowerCase().includes(taskSearchQuery.toLowerCase()) || 
+          t.content.some(c => c.toLowerCase().includes(taskSearchQuery.toLowerCase())) || 
           t.targetName.toLowerCase().includes(taskSearchQuery.toLowerCase())
       );
 
@@ -225,14 +236,14 @@ export const TasksView: React.FC<TasksViewProps> = ({
                 </div>
                 
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.content}</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.content} (每行一条消息)</label>
                   <textarea 
-                    value={newTask.content}
-                    onChange={e => setNewTask({...newTask, content: e.target.value})}
+                    value={newTask.contentStr}
+                    onChange={e => setNewTask({...newTask, contentStr: e.target.value})}
                     className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                    rows={3}
+                    rows={5}
                     required
-                    placeholder={newTask.type === 'text' ? "Hello world..." : "https://example.com/image.png"}
+                    placeholder="Hello world...&#10;Second message...&#10;Third message..."
                   />
                 </div>
 
@@ -425,7 +436,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                     </div>
                 </div>
                 
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="hidden md:block bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <table className="w-full text-left text-sm">
                         <thead className="bg-gray-50 text-gray-500">
                             <tr>
@@ -511,6 +522,94 @@ export const TasksView: React.FC<TasksViewProps> = ({
                             )}
                         </tbody>
                     </table>
+                </div>
+
+                {/* Mobile Card View */}
+                <div className="md:hidden space-y-4">
+                    {filteredTasks.length > 0 && (
+                         <div className="flex justify-end px-2">
+                            <label className="flex items-center space-x-2 text-sm text-gray-600">
+                                <input 
+                                    type="checkbox"
+                                    checked={filteredTasks.length > 0 && selectedTaskIds.size === filteredTasks.length}
+                                    onChange={e => {
+                                        if (e.target.checked) {
+                                            setSelectedTaskIds(new Set(filteredTasks.map(t => t.id)));
+                                        } else {
+                                            setSelectedTaskIds(new Set());
+                                        }
+                                    }}
+                                    className="rounded text-green-600 focus:ring-green-500"
+                                />
+                                <span>全选当前页</span>
+                            </label>
+                        </div>
+                    )}
+                    
+                    {filteredTasks.map(task => (
+                        <div key={task.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 space-y-3">
+                            <div className="flex justify-between items-start">
+                                <div className="flex items-center gap-3">
+                                    <input 
+                                        type="checkbox"
+                                        checked={selectedTaskIds.has(task.id)}
+                                        onChange={e => {
+                                            const newSet = new Set(selectedTaskIds);
+                                            if (e.target.checked) {
+                                                newSet.add(task.id);
+                                            } else {
+                                                newSet.delete(task.id);
+                                            }
+                                            setSelectedTaskIds(newSet);
+                                        }}
+                                        className="rounded text-green-600 focus:ring-green-500"
+                                    />
+                                    <div>
+                                        <div className="font-bold text-gray-900">{task.targetName}</div>
+                                        <div className="text-xs text-gray-500 mt-0.5">
+                                            {new Date(task.scheduleTime).toLocaleString()}
+                                        </div>
+                                    </div>
+                                </div>
+                                <span className={clsx(
+                                    "px-2 py-1 rounded-full text-xs font-medium",
+                                    task.status === 'success' ? "bg-green-100 text-green-700" :
+                                    task.status === 'pending' ? "bg-blue-100 text-blue-700" :
+                                    "bg-red-100 text-red-700"
+                                )}>
+                                    {task.status === 'success' ? t.success :
+                                     task.status === 'pending' ? t.pending : t.failed}
+                                </span>
+                            </div>
+                            
+                            <div className="bg-gray-50 p-3 rounded-lg text-sm text-gray-700 break-words">
+                                {task.content}
+                            </div>
+
+                            <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+                                <span className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-600">
+                                    {task.recurrence === 'interval' 
+                                        ? `${t.interval}: ${task.intervalValue}${t[task.intervalUnit + 's'] || task.intervalUnit}`
+                                        : t[task.recurrence || 'once']}
+                                </span>
+                                <div className="flex gap-3">
+                                    <button onClick={() => editTask(task)} className="p-2 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100">
+                                        <FileText className="w-4 h-4" />
+                                    </button>
+                                    <button onClick={() => deleteTask(task.id)} className="p-2 text-red-600 bg-red-50 rounded-lg hover:bg-red-100">
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            </div>
+                            {task.error && <p className="text-xs text-red-500">{task.error}</p>}
+                        </div>
+                    ))}
+                    
+                    {filteredTasks.length === 0 && (
+                        <div className="text-center text-gray-500 py-12 bg-white rounded-xl border border-gray-200">
+                            {tasks.length === 0 ? t.noTasks : '没有找到匹配的任务'}
+                        </div>
+                    )}
                 </div>
             </div>
           </div>

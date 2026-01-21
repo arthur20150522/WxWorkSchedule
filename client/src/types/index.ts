@@ -8,10 +8,11 @@ export interface BotStatus {
   export interface Template {
       id: string;
       name: string;
-      type: 'text' | 'image' | 'file';
-      content: string;
+      type: 'text';
+      content: string[];
       targets: { type: 'group' | 'contact', id: string, name: string }[];
       createdAt: string;
+  }string;
   }
   
   export interface ToastMsg {

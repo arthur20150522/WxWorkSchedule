@@ -17,31 +17,37 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
     templates, fetchTemplates, groups, contacts, showToast, onGenerateTask 
 }) => {
     const [isTemplateEditing, setIsTemplateEditing] = useState(false);
-    const [newTemplate, setNewTemplate] = useState<Partial<Template>>({
+    const [newTemplate, setNewTemplate] = useState<Partial<Template> & { contentStr: string }>({
         name: '',
         type: 'text',
-        content: '',
+        content: [],
+        contentStr: '',
         targets: []
     });
 
     const createTemplate = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newTemplate.name || !newTemplate.content || (newTemplate.targets?.length === 0)) {
+        const contentArray = newTemplate.contentStr?.split('\n').filter(line => line.trim() !== '') || [];
+
+        if (!newTemplate.name || contentArray.length === 0 || (newTemplate.targets?.length === 0)) {
             showToast('请填写完整模板信息', 'error');
             return;
         }
 
+        const templateData = { ...newTemplate, content: contentArray };
+        delete templateData.contentStr;
+
         try {
             if (isTemplateEditing && newTemplate.id) {
-                await axios.put(`/api/templates/${newTemplate.id}`, newTemplate);
+                await axios.put(`/api/templates/${newTemplate.id}`, templateData);
                 showToast('模板更新成功', 'success');
             } else {
-                await axios.post('/api/templates', newTemplate);
+                await axios.post('/api/templates', templateData);
                 showToast('模板创建成功', 'success');
             }
             fetchTemplates();
             setIsTemplateEditing(false);
-            setNewTemplate({ name: '', type: 'text', content: '', targets: [] });
+            setNewTemplate({ name: '', type: 'text', content: [], contentStr: '', targets: [] });
         } catch (e) {
             showToast('操作失败', 'error');
         }
@@ -67,7 +73,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                         {isTemplateEditing && (
                             <button onClick={() => {
                                 setIsTemplateEditing(false);
-                                setNewTemplate({ name: '', type: 'text', content: '', targets: [] });
+                                setNewTemplate({ name: '', type: 'text', content: [], contentStr: '', targets: [] });
                             }} className="text-sm text-gray-500 hover:text-gray-700">取消</button>
                         )}
                     </div>
@@ -162,7 +168,10 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                             <RefreshCw className="w-5 h-5" />
                                         </button>
                                         <button onClick={() => {
-                                            setNewTemplate(tpl);
+                                            setNewTemplate({
+                                                ...tpl,
+                                                contentStr: tpl.content.join('\n')
+                                            });
                                             setIsTemplateEditing(true);
                                             window.scrollTo({ top: 0, behavior: 'smooth' });
                                         }} className="text-blue-600 hover:text-blue-800">

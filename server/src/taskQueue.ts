@@ -76,7 +76,14 @@ export class TaskQueue {
             }
 
             // Send content
-            await target.say(task.content);
+            const currentIndex = task.currentContentIndex || 0;
+            const contentToSend = task.content[currentIndex];
+            
+            if (contentToSend) {
+                await target.say(contentToSend);
+            } else {
+                console.warn(`[${username}] Task ${task.id} has no content at index ${currentIndex}`);
+            }
 
             // Update status or Reschedule
             const db = await DBManager.getDb(username);
@@ -114,7 +121,12 @@ export class TaskQueue {
 
                         t.scheduleTime = nextSchedule.toISOString();
                         t.status = 'pending';
-                        console.log(`[${username}] Rescheduled task ${t.id} to ${t.scheduleTime}`);
+                        
+                        // Cycle content index
+                        const nextIndex = (currentIndex + 1) % t.content.length;
+                        t.currentContentIndex = nextIndex;
+
+                        console.log(`[${username}] Rescheduled task ${t.id} to ${t.scheduleTime}. Next content index: ${nextIndex}`);
                     } else {
                         t.status = 'success';
                     }
