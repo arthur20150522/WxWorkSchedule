@@ -34,7 +34,7 @@ export const LogsView: React.FC = () => {
                  <div className="bg-gray-900 text-gray-300 p-4 rounded-lg font-mono text-sm h-96 overflow-y-auto">
                      {logs.map(log => (
                          <div key={log.id} className="mb-1 border-b border-gray-800 pb-1">
-                             <span className="text-gray-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                             <span className="text-gray-500">{(() => { const d = new Date(log.timestamp); return `【${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}】`; })()}</span>
                              <span className={clsx(
                                  "ml-2 font-bold",
                                  log.level === 'error' ? "text-red-400" : "text-blue-400"
