@@ -56,6 +56,18 @@ export class TaskQueue {
         console.log(`[${username}] Executing task ${task.id}`);
         const bot = BotManager.getBot(username);
 
+        // Mark as processing immediately so the scheduler cannot re-queue this
+        // task on the next 10-second tick while we are waiting for WeChat to respond.
+        try {
+            const dbPre = await DBManager.getDb(username);
+            await dbPre.update(({ tasks }) => {
+                const t = tasks.find(x => x.id === task.id);
+                if (t) t.status = 'processing';
+            });
+        } catch (e) {
+            console.error(`[${username}] Failed to mark task ${task.id} as processing:`, e);
+        }
+
         try {
             let target: any;
 

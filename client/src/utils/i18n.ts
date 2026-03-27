@@ -33,6 +33,7 @@ export const t = {
     scheduledTasks: "任务列表",
     allTasks: "所有任务",
     pending: "等待执行",
+    processing: "执行中",
     success: "执行成功",
     failed: "执行失败",
     target: "目标",

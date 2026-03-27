@@ -49,7 +49,7 @@ export interface ToastMsg {
   content: string[];
   currentContentIndex?: number;
   scheduleTime: string;
-  status: 'pending' | 'success' | 'failed';
+  status: 'pending' | 'processing' | 'success' | 'failed';
   error?: string;
   recurrence?: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
   intervalValue?: number;

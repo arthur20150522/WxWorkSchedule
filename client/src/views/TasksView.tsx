@@ -59,7 +59,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
     const [isEditing, setIsEditing] = useState(false);
     const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
     const [taskSearchQuery, setTaskSearchQuery] = useState('');
-    const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'success' | 'failed'>('all');
+    const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'processing' | 'success' | 'failed'>('all');
     const [selectedTargets, setSelectedTargets] = useState<{ type: 'group' | 'contact'; id: string; name: string }[]>([]);
 
     const getIntervalUnitLabel = (unit?: 'minute' | 'hour' | 'day') => {
@@ -544,6 +544,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                         >
                             <option value="all">{t.allTasks}</option>
                             <option value="pending">{t.pending}</option>
+                            <option value="processing">{t.processing}</option>
                             <option value="success">{t.success}</option>
                             <option value="failed">{t.failed}</option>
                         </select>
@@ -613,10 +614,12 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                             "px-2 py-1 rounded-full text-xs font-medium",
                                             task.status === 'success' ? "bg-green-100 text-green-700" :
                                             task.status === 'pending' ? "bg-blue-100 text-blue-700" :
+                                            task.status === 'processing' ? "bg-yellow-100 text-yellow-700" :
                                             "bg-red-100 text-red-700"
                                         )}>
                                             {task.status === 'success' ? t.success :
-                                             task.status === 'pending' ? t.pending : t.failed}
+                                             task.status === 'pending' ? t.pending :
+                                             task.status === 'processing' ? t.processing : t.failed}
                                         </span>
                                         {task.error && <p className="text-xs text-red-500 mt-1">{task.error}</p>}
                                     </td>
@@ -692,10 +695,12 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                     "px-2 py-1 rounded-full text-xs font-medium",
                                     task.status === 'success' ? "bg-green-100 text-green-700" :
                                     task.status === 'pending' ? "bg-blue-100 text-blue-700" :
+                                    task.status === 'processing' ? "bg-yellow-100 text-yellow-700" :
                                     "bg-red-100 text-red-700"
                                 )}>
                                     {task.status === 'success' ? t.success :
-                                     task.status === 'pending' ? t.pending : t.failed}
+                                     task.status === 'pending' ? t.pending :
+                                     task.status === 'processing' ? t.processing : t.failed}
                                 </span>
                             </div>
                             

@@ -31,7 +31,7 @@ export interface Task {
   recurrence?: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
   intervalValue?: number; // e.g. 30
   intervalUnit?: 'minute' | 'hour' | 'day'; // e.g. 'minute'
-  status: 'pending' | 'success' | 'failed';
+  status: 'pending' | 'processing' | 'success' | 'failed';
   createdAt: string;
   updatedAt?: string;
   error?: string;
@@ -86,6 +86,12 @@ export class DBManager {
                 }
                 if (typeof t.currentContentIndex === 'undefined') {
                     t.currentContentIndex = 0;
+                }
+                // Recovery: tasks stuck in 'processing' at startup mean the server
+                // crashed mid-execution — reset them so the scheduler picks them up again.
+                if (t.status === 'processing') {
+                    console.log(`[DBManager] Recovering stuck processing task ${t.id} → pending`);
+                    t.status = 'pending';
                 }
             });
 
