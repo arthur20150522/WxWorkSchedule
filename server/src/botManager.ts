@@ -8,6 +8,8 @@ export class BotManager {
     private static instances: Map<string, Wechaty | any> = new Map();
     private static qrCodes: Map<string, string> = new Map();
     private static loginTimes: Map<string, string> = new Map();
+    // Prevent concurrent auto-restarts for the same user
+    private static restartingUsers: Set<string> = new Set();
 
     static getQrCode(username: string): string | null {
         return this.qrCodes.get(username) || null;
@@ -65,10 +67,28 @@ export class BotManager {
             BotManager.qrCodes.delete(username);
             BotManager.loginTimes.set(username, new Date().toISOString());
         });
-        bot.on('logout', user => {
+        bot.on('logout', async user => {
             console.log(`[${username}] User ${user} logged out`);
             BotManager.loginTimes.delete(username);
-            // Optionally clean up or mark as logged out
+            BotManager.qrCodes.delete(username);
+
+            // Auto-restart so the scan QR flow begins again.
+            // Guard against concurrent restarts (e.g. rapid logout events).
+            if (BotManager.restartingUsers.has(username)) return;
+            BotManager.restartingUsers.add(username);
+
+            console.log(`[${username}] Session expired — scheduling auto-restart in 3s`);
+            setTimeout(async () => {
+                try {
+                    await BotManager.stopBot(username);
+                    BotManager.getBot(username);
+                    console.log(`[${username}] Auto-restart complete, waiting for QR scan`);
+                } catch (e) {
+                    console.error(`[${username}] Auto-restart failed:`, e);
+                } finally {
+                    BotManager.restartingUsers.delete(username);
+                }
+            }, 3000);
         });
         bot.on('message', msg => console.log(`[${username}] Message: ${msg}`));
         // Suppress GError: NOPUPPET which can happen during startup check
