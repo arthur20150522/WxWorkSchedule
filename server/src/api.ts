@@ -302,14 +302,26 @@ apiRouter.put('/tasks/:id', async (req, res) => {
         await db.update(({ tasks }) => {
             const index = tasks.findIndex(t => String(t.id) === String(id));
             if (index > -1) {
-                // Keep original ID and createdAt, update other fields
-                tasks[index] = {
-                    ...tasks[index],
+                const existing = tasks[index];
+                const merged: Task = {
+                    ...existing,
                     ...updates,
-                    id: tasks[index].id, // Ensure ID doesn't change
+                    id: existing.id,       // never let the client change the ID
+                    createdAt: existing.createdAt, // immutable
                     updatedAt: new Date().toISOString()
                 };
-                updatedTask = tasks[index];
+
+                // If the task was in a terminal state (success/failed/processing)
+                // and the user saved an edit, they clearly intend to re-schedule it.
+                // Reset to pending so the scheduler picks it up.
+                const terminalStatuses = ['success', 'failed', 'processing'];
+                if (terminalStatuses.includes(existing.status)) {
+                    merged.status = 'pending';
+                    merged.error = undefined;
+                }
+
+                tasks[index] = merged;
+                updatedTask = merged;
             }
         });
 
