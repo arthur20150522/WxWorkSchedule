@@ -72,14 +72,36 @@ export class TaskQueue {
             let target: any;
 
             if (task.targetType === 'group') {
-                target = await bot.Room.find({ id: task.targetId });
-                if (!target) {
-                    target = await bot.Room.find({ topic: task.targetName });
+                // Cache hit: room was fetched when user viewed the groups list
+                target = BotManager.getCachedRoom(username, task.targetId);
+                if (target) {
+                    console.log(`[${username}] Cache hit for room ${task.targetId}`);
+                } else {
+                    // Cache miss: fetch from WeChat and populate cache for next time
+                    console.log(`[${username}] Cache miss for room ${task.targetId}, fetching from WeChat`);
+                    target = await bot.Room.find({ id: task.targetId });
+                    if (!target) {
+                        target = await bot.Room.find({ topic: task.targetName });
+                    }
+                    if (target) {
+                        BotManager.cacheRooms(username, [target]);
+                    }
                 }
             } else {
-                target = await bot.Contact.find({ id: task.targetId });
-                if (!target) {
-                    target = await bot.Contact.find({ name: task.targetName });
+                // Cache hit: contact was fetched when user viewed the contacts list
+                target = BotManager.getCachedContact(username, task.targetId);
+                if (target) {
+                    console.log(`[${username}] Cache hit for contact ${task.targetId}`);
+                } else {
+                    // Cache miss: fetch from WeChat and populate cache for next time
+                    console.log(`[${username}] Cache miss for contact ${task.targetId}, fetching from WeChat`);
+                    target = await bot.Contact.find({ id: task.targetId });
+                    if (!target) {
+                        target = await bot.Contact.find({ name: task.targetName });
+                    }
+                    if (target) {
+                        BotManager.cacheContacts(username, [target]);
+                    }
                 }
             }
 

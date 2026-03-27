@@ -134,6 +134,10 @@ apiRouter.get('/groups', async (req, res) => {
     }
     try {
         const rooms = await bot.Room.findAll();
+
+        // Cache all rooms so task execution can skip the doGet round-trip
+        BotManager.cacheRooms(user, rooms);
+
         const roomData = await Promise.all(rooms.map(async (room: any) => {
             const topic = await room.topic();
             return {
@@ -159,7 +163,10 @@ apiRouter.get('/contacts', async (req, res) => {
     try {
         const contacts = await bot.Contact.findAll();
         const validContacts = contacts.filter((c: any) => c.friend());
-        
+
+        // Cache all valid contacts so task execution can skip the doGet round-trip
+        BotManager.cacheContacts(user, validContacts);
+
         const contactData = validContacts.map((c: any) => ({
             id: c.id,
             name: c.name(),

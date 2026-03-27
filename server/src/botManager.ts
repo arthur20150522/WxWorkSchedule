@@ -11,6 +11,58 @@ export class BotManager {
     // Prevent concurrent auto-restarts for the same user
     private static restartingUsers: Set<string> = new Set();
 
+    // Room / Contact caches — populated when the user views the groups or contacts
+    // list in the UI, and cleared whenever the bot session ends. This eliminates
+    // the repeated doGet HTTP round-trips to WeChat on every task execution.
+    private static roomCaches: Map<string, Map<string, any>> = new Map();
+    private static contactCaches: Map<string, Map<string, any>> = new Map();
+
+    // ── Cache write ──────────────────────────────────────────────────────────
+
+    static cacheRooms(username: string, rooms: any[]): void {
+        if (!this.roomCaches.has(username)) {
+            this.roomCaches.set(username, new Map());
+        }
+        const cache = this.roomCaches.get(username)!;
+        for (const room of rooms) {
+            cache.set(room.id, room);
+        }
+        console.log(`[BotManager] Room cache updated for ${username}: ${cache.size} rooms`);
+    }
+
+    static cacheContacts(username: string, contacts: any[]): void {
+        if (!this.contactCaches.has(username)) {
+            this.contactCaches.set(username, new Map());
+        }
+        const cache = this.contactCaches.get(username)!;
+        for (const contact of contacts) {
+            cache.set(contact.id, contact);
+        }
+        console.log(`[BotManager] Contact cache updated for ${username}: ${cache.size} contacts`);
+    }
+
+    // ── Cache read ───────────────────────────────────────────────────────────
+
+    static getCachedRoom(username: string, roomId: string): any | null {
+        return this.roomCaches.get(username)?.get(roomId) ?? null;
+    }
+
+    static getCachedContact(username: string, contactId: string): any | null {
+        return this.contactCaches.get(username)?.get(contactId) ?? null;
+    }
+
+    // ── Cache invalidation ───────────────────────────────────────────────────
+
+    static clearCache(username: string): void {
+        const roomCount = this.roomCaches.get(username)?.size ?? 0;
+        const contactCount = this.contactCaches.get(username)?.size ?? 0;
+        this.roomCaches.delete(username);
+        this.contactCaches.delete(username);
+        console.log(`[BotManager] Cache cleared for ${username} (was: ${roomCount} rooms, ${contactCount} contacts)`);
+    }
+
+    // ── Existing accessors ───────────────────────────────────────────────────
+
     static getQrCode(username: string): string | null {
         return this.qrCodes.get(username) || null;
     }
@@ -71,6 +123,8 @@ export class BotManager {
             console.log(`[${username}] User ${user} logged out`);
             BotManager.loginTimes.delete(username);
             BotManager.qrCodes.delete(username);
+            // Session is dead — cached room/contact objects are invalid
+            BotManager.clearCache(username);
 
             // Auto-restart so the scan QR flow begins again.
             // Guard against concurrent restarts (e.g. rapid logout events).
@@ -112,5 +166,7 @@ export class BotManager {
             await bot.stop();
             this.instances.delete(username);
         }
+        // Clear cache regardless — the new session will repopulate it
+        this.clearCache(username);
     }
 }
