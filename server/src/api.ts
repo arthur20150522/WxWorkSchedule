@@ -33,10 +33,27 @@ app.post('/api/login', async (req, res) => {
         if (isValid) {
             const token = generateToken(username);
             // Ensure bot is initialized for this user
-            BotManager.getBot(username);
-            
+            const bot = BotManager.getBot(username);
+
             await addLog(username, 'info', `User ${username} logged in from ${ip}`);
             res.json({ success: true, token, username: username });
+
+            // Warm Room/Contact cache in the background so scheduled tasks
+            // find cache hits instead of triggering slow doGet round-trips.
+            // Fire-and-forget: errors here must never affect the login response.
+            if (bot.isLoggedIn) {
+                Promise.all([
+                    bot.Room.findAll().then((rooms: any[]) => {
+                        BotManager.cacheRooms(username, rooms);
+                        console.log(`[Login] Pre-warmed ${rooms.length} rooms for ${username}`);
+                    }),
+                    bot.Contact.findAll().then((contacts: any[]) => {
+                        const friends = contacts.filter((c: any) => c.friend());
+                        BotManager.cacheContacts(username, friends);
+                        console.log(`[Login] Pre-warmed ${friends.length} contacts for ${username}`);
+                    })
+                ]).catch(e => console.error(`[Login] Cache pre-warm failed for ${username}:`, e));
+            }
         } else {
             console.warn(`Failed login attempt for ${username} from ${ip}`);
             res.status(401).json({ error: 'Invalid credentials' });
