@@ -44,7 +44,14 @@ export class BotManager {
     // ── Cache read ───────────────────────────────────────────────────────────
 
     static getCachedRoom(username: string, roomId: string): any | null {
-        return this.roomCaches.get(username)?.get(roomId) ?? null;
+        const cache = this.roomCaches.get(username);
+        if (!cache) return null;
+        const hit = cache.get(roomId);
+        if (!hit) {
+            const keys = Array.from(cache.keys()).slice(0, 3);
+            console.log(`[BotManager] Room cache miss for ${roomId}. Cache keys sample: ${JSON.stringify(keys)}`);
+        }
+        return hit ?? null;
     }
 
     static getCachedContact(username: string, contactId: string): any | null {
