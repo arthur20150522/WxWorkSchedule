@@ -130,17 +130,22 @@ export class BotManager {
             // Pre-warm room/contact caches every time the bot (re-)logs in,
             // including auto-restarts triggered by watchdog logout events.
             // Fire-and-forget — must never throw into the event loop.
-            Promise.all([
+            const prewarm = (label: string) => Promise.all([
                 bot.Room.findAll().then((rooms: any[]) => {
                     BotManager.cacheRooms(username, rooms);
-                    console.log(`[${username}] Pre-warmed ${rooms.length} rooms after bot login`);
+                    console.log(`[${username}] Pre-warmed ${rooms.length} rooms (${label})`);
                 }),
                 bot.Contact.findAll().then((contacts: any[]) => {
                     const friends = contacts.filter((c: any) => c.friend());
                     BotManager.cacheContacts(username, friends);
-                    console.log(`[${username}] Pre-warmed ${friends.length} contacts after bot login`);
+                    console.log(`[${username}] Pre-warmed ${friends.length} contacts (${label})`);
                 })
-            ]).catch(e => console.error(`[${username}] Cache pre-warm failed after bot login:`, e));
+            ]).catch(e => console.error(`[${username}] Cache pre-warm failed (${label}):`, e));
+
+            // Immediate pre-warm — may be partial if WeChat hasn't finished syncing
+            prewarm('immediate');
+            // Delayed pre-warm after 60s — catches rooms not yet synced at login time
+            setTimeout(() => prewarm('delayed-60s'), 60_000);
         });
         bot.on('logout', async user => {
             console.log(`[${username}] User ${user} logged out`);

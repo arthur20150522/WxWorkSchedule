@@ -77,9 +77,11 @@ export class TaskQueue {
                 if (target) {
                     console.log(`[${username}] Cache hit for room ${task.targetId}`);
                 } else {
-                    // Cache miss: fetch from WeChat and populate cache for next time
-                    console.log(`[${username}] Cache miss for room ${task.targetId}, fetching from WeChat`);
-                    target = await bot.Room.find({ id: task.targetId });
+                    // Cache miss: refresh entire room cache then look up
+                    console.log(`[${username}] Cache miss for room ${task.targetId}, refreshing cache`);
+                    const allRooms = await bot.Room.findAll();
+                    BotManager.cacheRooms(username, allRooms);
+                    target = BotManager.getCachedRoom(username, task.targetId);
                     if (!target) {
                         target = await bot.Room.find({ topic: task.targetName });
                     }
