@@ -27,7 +27,8 @@ export class BotManager {
         for (const room of rooms) {
             cache.set(room.id, room);
         }
-        console.log(`[BotManager] Room cache updated for ${username}: ${cache.size} rooms`);
+        const sampleKeys = Array.from(cache.keys()).slice(0, 3);
+        console.log(`[BotManager] Room cache updated for ${username}: ${cache.size} rooms. Keys sample: ${JSON.stringify(sampleKeys)}`);
     }
 
     static cacheContacts(username: string, contacts: any[]): void {
