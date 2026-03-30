@@ -118,6 +118,21 @@ export class BotManager {
             console.log(`[${username}] User ${user} logged in`);
             BotManager.qrCodes.delete(username);
             BotManager.loginTimes.set(username, new Date().toISOString());
+
+            // Pre-warm room/contact caches every time the bot (re-)logs in,
+            // including auto-restarts triggered by watchdog logout events.
+            // Fire-and-forget — must never throw into the event loop.
+            Promise.all([
+                bot.Room.findAll().then((rooms: any[]) => {
+                    BotManager.cacheRooms(username, rooms);
+                    console.log(`[${username}] Pre-warmed ${rooms.length} rooms after bot login`);
+                }),
+                bot.Contact.findAll().then((contacts: any[]) => {
+                    const friends = contacts.filter((c: any) => c.friend());
+                    BotManager.cacheContacts(username, friends);
+                    console.log(`[${username}] Pre-warmed ${friends.length} contacts after bot login`);
+                })
+            ]).catch(e => console.error(`[${username}] Cache pre-warm failed after bot login:`, e));
         });
         bot.on('logout', async user => {
             console.log(`[${username}] User ${user} logged out`);
