@@ -9,12 +9,10 @@ interface DashboardViewProps {
     botStatus: BotStatus;
     isStatusLoading: boolean;
     qrCode: string | null;
-    isRestarting: boolean;
-    onRestartBot: () => void;
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({ 
-    botStatus, isStatusLoading, qrCode, isRestarting, onRestartBot 
+export const DashboardView: React.FC<DashboardViewProps> = ({
+    botStatus, isStatusLoading, qrCode
 }) => {
     return (
           <div className="max-w-2xl mx-auto space-y-6">
@@ -79,19 +77,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             )}
 
             <div className="mt-8 pt-6 border-t border-gray-100">
-                  <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 text-left mb-6">
+                  <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 text-left">
                       <h3 className="font-bold text-orange-800 text-sm mb-1">{t.riskWarningTitle}</h3>
                       <p className="text-orange-700 text-xs leading-relaxed">{t.riskWarningContent}</p>
                   </div>
-
-                  <button 
-                    onClick={onRestartBot}
-                    disabled={isRestarting}
-                    className="flex items-center justify-center gap-2 w-full py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors disabled:opacity-50"
-                  >
-                      <RefreshCw className={clsx("w-4 h-4", isRestarting && "animate-spin")} />
-                      {isRestarting ? t.restarting : t.refreshQr}
-                  </button>
               </div>
             </div>
           </div>

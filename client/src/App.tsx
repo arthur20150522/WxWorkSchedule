@@ -31,13 +31,13 @@ function App() {
   
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [token, setToken] = useState<string | null>(null);
-  const [isRestarting, setIsRestarting] = useState(false);
+  const [serverIp, setServerIp] = useState<string>('');
   const [showDebug, setShowDebug] = useState(false);
   const [draftTask, setDraftTask] = useState<Partial<Task> | undefined>(undefined);
 
   const { debugLogs, setDebugLogs } = useDebugLogs();
   const { toasts, showToast } = useToast();
-  const { confirmDialog, openConfirm, closeConfirm } = useConfirmDialog();
+  const { confirmDialog, closeConfirm } = useConfirmDialog();
 
   // Axios interceptor for token
   useEffect(() => {
@@ -135,25 +135,6 @@ function App() {
     }
   };
 
-  const restartBot = async () => {
-    openConfirm({
-        title: t.restarting,
-        message: '重启机器人会断开当前连接并刷新二维码，确定吗？',
-        onConfirm: async () => {
-            setIsRestarting(true);
-            try {
-                await axios.post('/api/bot/restart');
-                setBotStatus({ status: 'offline' });
-                setQrCode(null);
-            } catch (e) {
-                showToast('重启失败', 'error');
-            } finally {
-                setTimeout(() => setIsRestarting(false), 5000);
-            }
-        }
-    });
-  };
-
   const handleLoginSuccess = (newToken: string, username: string, remember: boolean, password?: string) => {
       setToken(newToken);
       setIsAuthenticated(true);
@@ -214,7 +195,8 @@ function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
     fetchStatus();
-    const interval = setInterval(fetchStatus, 3000); 
+    axios.get('/api/server-ip').then(r => setServerIp(r.data.ip)).catch(() => {});
+    const interval = setInterval(fetchStatus, 3000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
@@ -255,8 +237,9 @@ function App() {
                 {activeTab === 'logs' && t.logs}
             </h2>
             <div className="flex items-center gap-4">
-                <div className="text-sm text-gray-500">
-                    {new Date().toLocaleDateString()}
+                <div className="text-sm text-gray-500 text-right">
+                    <div>{new Date().toLocaleDateString()}</div>
+                    {serverIp && <div className="text-xs font-mono text-orange-600">IP: {serverIp}</div>}
                 </div>
                 <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center text-green-700 font-bold border border-green-200">
                     A
@@ -266,12 +249,10 @@ function App() {
 
         <div className="p-6 md:p-8 max-w-7xl mx-auto">
           {activeTab === 'dashboard' && (
-              <DashboardView 
-                  botStatus={botStatus} 
-                  isStatusLoading={isStatusLoading} 
-                  qrCode={qrCode} 
-                  isRestarting={isRestarting} 
-                  onRestartBot={restartBot} 
+              <DashboardView
+                  botStatus={botStatus}
+                  isStatusLoading={isStatusLoading}
+                  qrCode={qrCode}
               />
           )}
           {activeTab === 'groups' && (

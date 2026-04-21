@@ -63,6 +63,12 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// Server IP detection (helps monitor login IP for WeChat security)
+app.get('/api/server-ip', (req, res) => {
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    res.json({ ip: typeof ip === 'string' ? ip.split(',')[0].trim() : ip });
+});
+
 // Protected Routes Middleware
 const apiRouter = express.Router();
 apiRouter.use(authenticateToken);
