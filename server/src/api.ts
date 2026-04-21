@@ -64,9 +64,14 @@ app.post('/api/login', async (req, res) => {
 });
 
 // Server IP detection (helps monitor login IP for WeChat security)
-app.get('/api/server-ip', (req, res) => {
-    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    res.json({ ip: typeof ip === 'string' ? ip.split(',')[0].trim() : ip });
+app.get('/api/server-ip', async (req, res) => {
+    try {
+        const resp = await fetch('https://api.ipify.org?format=json');
+        const data = await resp.json() as { ip: string };
+        res.json({ ip: data.ip });
+    } catch {
+        res.json({ ip: 'unknown' });
+    }
 });
 
 // Protected Routes Middleware
