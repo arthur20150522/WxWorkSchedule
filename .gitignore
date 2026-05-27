@@ -32,8 +32,6 @@ server/db.json
 server/config.json
 server/.user
 server/users/
-server/*.memory-card.json
-*.memory-card.json
 server/.env
 .user
 users/

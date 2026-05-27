@@ -1,18 +1,17 @@
 # WxSchedule（微信机器人定时发送管理系统）
 
-一个基于 Wechaty 的微信机器人 + Web 管理后台，用于扫码登录、管理群组/联系人，并创建“定时/周期性”自动发送任务。
+一个基于 wx4py (Windows UI Automation) 的微信机器人 + Web 管理后台，用于管理群组/联系人，并创建”定时/周期性”自动发送任务。微信需在 Windows 桌面端保持登录状态。
 
 ## 功能概览
 
 - 多用户/多账号管理
   - 支持多用户配置（`server/.user`）
-  - 每个用户拥有独立的微信机器人实例、任务数据、日志和 Session 持久化
-  - 微信扫码状态与用户绑定，持久化存储，重启不丢失登录态
+  - 每个用户拥有独立的任务数据、日志
+  - 微信通过 Windows 桌面端预登录（wx4py UI Automation）
 - 机器人状态面板
-  - offline / waiting_for_scan / logged_in
-  - 展示当前登录微信用户、数据同步状态（ready）
-  - 展示扫码二维码（dataURL）
-  - 重启机器人/刷新二维码
+  - online / offline
+  - 展示当前微信用户连接状态
+  - wx4py 桥接状态显示
 - 群组管理
   - 拉取群列表、显示成员数
   - 搜索群
@@ -31,20 +30,23 @@
 ## 技术栈
 
 - Client：React + TypeScript + Vite + TailwindCSS（axios + JWT 鉴权）
-- Server：Node.js + TypeScript + Express + Wechaty + lowdb（多租户数据隔离）
+- Server：Node.js + TypeScript + Express + wx4py (Python bridge) + lowdb（多租户数据隔离）
 
 ## 目录结构
 
 - client：管理后台前端（Vite）
 - server：后端服务
+  - src/index.ts：入口，启动 wx4py 桥接连接 + 调度器
   - src/api.ts：REST API
-  - src/botManager.ts：多实例 Bot 管理器
-  - src/dbManager.ts：多租户 DB 管理器
+  - src/wxBridge.ts：wx4py Python 桥接 HTTP 客户端
+  - src/botManager.ts：Bot 单例管理器 + 群组/联系人缓存
+  - src/dbManager.ts：多租户 DB 管理器（lowdb）
   - src/userManager.ts：用户配置与认证
   - src/scheduler.ts：多用户定时任务扫描
+  - src/taskQueue.ts：任务执行队列（通过 wx4py 发送消息）
+  - pybridge/bridge.py：wx4py Python HTTP 桥接服务（127.0.0.1:39800）
   - users/：存放各用户数据（自动生成，已在 .gitignore 中忽略）
     - `<username>/db.json`：任务数据
-    - `<username>/bot.memory-card.json`：微信登录 Session
   - .user：用户账号配置文件（已在 .gitignore 中忽略）
 
 ## 快速开始
@@ -62,7 +64,17 @@
 
 默认会自动创建一个 `admin: admin123` 的配置。
 
-### 2) 启动后端
+### 2) 启动 wx4py 桥接
+
+```bash
+cd server/pybridge
+pip install -r requirements.txt
+python bridge.py
+```
+
+桥接服务监听：`http://127.0.0.1:39800`
+
+### 3) 启动后端
 
 ```bash
 cd server
@@ -72,7 +84,7 @@ npm run dev
 
 默认监听：`http://localhost:3000`
 
-### 3) 启动前端
+### 4) 启动前端
 
 ```bash
 cd client
@@ -100,15 +112,13 @@ JWT_SECRET=your_super_secure_secret_key
 
 ## 使用说明（管理后台）
 
-1. 打开前端页面，输入用户名（如 `admin`）和密码登录
-2. 登录后，系统会自动为该用户初始化微信机器人实例
-3. 在“概览”页查看机器人状态
-   - 若显示“等待扫码”，使用微信扫码登录
-   - 登录成功后，Session 会自动持久化到 `server/users/<username>/bot.memory-card.json`
-   - 下次重启服务或刷新页面，无需再次扫码（只要 Session 未过期）
-4. 在“群组管理”页搜索群并点击“发送消息”
-5. 在“任务管理”页创建定时任务
-6. 在“系统日志”页查看运行日志
+1. 确保 Windows 桌面端微信已登录并保持运行
+2. 启动 wx4py 桥接（`python bridge.py`），确保桥接可以操作微信窗口
+3. 打开前端页面，输入用户名（如 `admin`）和密码登录
+4. 在”概览”页查看机器人状态（online / offline）
+5. 在”群组管理”页搜索群并点击”发送消息”
+6. 在”任务管理”页创建定时任务
+7. 在”系统日志”页查看运行日志
 
 ## 部署到远程服务器
 
@@ -172,9 +182,8 @@ server {
 
 ### 机器人（需携带 Bearer Token）
 
-- `GET /api/status`：获取当前用户机器人状态
-- `GET /api/qr`：获取扫码二维码
-- `POST /api/bot/restart`：重启当前用户的机器人
+- `GET /api/status`：获取 wx4py 桥接和微信连接状态
+- `POST /api/bot/restart`：重新连接 wx4py 桥接
 
 ### 群组/联系人（需携带 Bearer Token）
 
@@ -193,7 +202,8 @@ server {
 
 ## 已知限制与注意事项
 
-- Wechaty Web 协议/UOS 存在风控风险：频繁登录/使用 Web 协议可能导致账号被限制登录，建议用小号测试。
+- wx4py 依赖 Windows UI Automation：必须在本机 Windows 桌面环境运行，微信需保持登录状态，不能最小化到托盘。
+- 群列表枚举限制：wx4py 无直接列举群组的 API，群列表通过搜索扫描获取，可能不完整。
 - 调度扫描周期为 10 秒：任务触发时间存在最多约 10 秒的延迟。
-- 多实例资源消耗：每个登录用户都会启动一个 Wechaty (Puppeteer) 实例，用户数较多时请注意服务器内存消耗。
+- 单用户模型：所有 Web 用户共享同一个微信桌面端实例，适合个人/小团队使用。
 
