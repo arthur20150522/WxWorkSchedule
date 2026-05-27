@@ -1,200 +1,174 @@
-import { Wechaty, WechatyBuilder } from 'wechaty';
-import { UserManager } from './userManager.js';
-import path from 'path';
-import QRCode from 'qrcode';
+import { wxBridge } from './wxBridge.js';
 import { MockBot } from './mockBot.js';
 
+const USE_MOCK = process.env.USE_MOCK_BOT === 'true';
+
+// ── Caches (keyed by id = display name) ──────────────────────────────
+let roomCache: Map<string, any> = new Map();
+let contactCache: Map<string, any> = new Map();
+let loginTime: string | null = null;
+
+let botInstance: any = null;
+let initialized = false;
+
+function ensureBot(): any {
+  if (botInstance) return botInstance;
+
+  if (USE_MOCK) {
+    console.log('[BotManager] Using MockBot (USE_MOCK_BOT=true)');
+    botInstance = new MockBot('admin');
+    loginTime = new Date().toISOString();
+    initialized = true;
+    return botInstance;
+  }
+
+  // Real wx4py-backed bot wrapper
+  botInstance = {
+    get isLoggedIn() {
+      return initialized;
+    },
+
+    get currentUser() {
+      return { name: () => 'WeChat User', id: 'wx4py_user' };
+    },
+
+    Room: {
+      findAll: async () => {
+        const groups = await wxBridge.groups();
+        cacheRooms(groups);
+        return groups.map(g => ({
+          id: g.id,
+          topic: async () => g.topic,
+          memberAll: async () => new Array(g.memberCount),
+          say: async (text: string) => {
+            await wxBridge.send(g.id, text, 'group');
+          },
+        }));
+      },
+      find: async (query: any) => {
+        const results = await wxBridge.search(query.topic || query.id || '', 'group');
+        if (results.length === 0) return null;
+        const r = results[0];
+        return {
+          id: r.id,
+          topic: async () => r.name,
+          memberAll: async () => [],
+          say: async (text: string) => {
+            await wxBridge.send(r.name, text, 'group');
+          },
+        };
+      },
+    },
+
+    Contact: {
+      findAll: async () => {
+        const contacts = await wxBridge.contacts();
+        cacheContacts(contacts);
+        return contacts.map(c => ({
+          id: c.id,
+          name: () => c.name,
+          friend: () => true,
+          type: () => 1,
+          say: async (text: string) => {
+            await wxBridge.send(c.name, text, 'contact');
+          },
+        }));
+      },
+      find: async (query: any) => {
+        const results = await wxBridge.search(query.name || query.id || '', 'contact');
+        if (results.length === 0) return null;
+        const r = results[0];
+        return {
+          id: r.id,
+          name: () => r.name,
+          friend: () => true,
+          type: () => 1,
+          say: async (text: string) => {
+            await wxBridge.send(r.name, text, 'contact');
+          },
+        };
+      },
+    },
+  };
+
+  initialized = true;
+  return botInstance;
+}
+
+// ── Public API (single-user) ─────────────────────────────────────────
+
 export class BotManager {
-    private static instances: Map<string, Wechaty | any> = new Map();
-    private static qrCodes: Map<string, string> = new Map();
-    private static loginTimes: Map<string, string> = new Map();
-    // Prevent concurrent auto-restarts for the same user
-    private static restartingUsers: Set<string> = new Set();
+  static getBot(_username?: string): any {
+    return ensureBot();
+  }
 
-    // Room / Contact caches — populated when the user views the groups or contacts
-    // list in the UI, and cleared whenever the bot session ends. This eliminates
-    // the repeated doGet HTTP round-trips to WeChat on every task execution.
-    private static roomCaches: Map<string, Map<string, any>> = new Map();
-    private static contactCaches: Map<string, Map<string, any>> = new Map();
+  static getLoginTime(): string | null {
+    return loginTime;
+  }
 
-    // ── Cache write ──────────────────────────────────────────────────────────
+  static getQrCode(): null {
+    return null; // wx4py has no QR — WeChat is pre-logged-in
+  }
 
-    static cacheRooms(username: string, rooms: any[]): void {
-        if (!this.roomCaches.has(username)) {
-            this.roomCaches.set(username, new Map());
-        }
-        const cache = this.roomCaches.get(username)!;
-        for (const room of rooms) {
-            cache.set(room.id, room);
-        }
-        const sampleKeys = Array.from(cache.keys()).slice(0, 3);
-        console.log(`[BotManager] Room cache updated for ${username}: ${cache.size} rooms. Keys sample: ${JSON.stringify(sampleKeys)}`);
+  // ── Cache ──────────────────────────────────────────────────────────
+
+  static cacheRooms(_user: string, rooms: any[]): void {
+    for (const r of rooms) roomCache.set(r.id, r);
+  }
+
+  static cacheContacts(_user: string, contacts: any[]): void {
+    for (const c of contacts) contactCache.set(c.id, c);
+  }
+
+  static getCachedRoom(_user: string, roomId: string): any | null {
+    return roomCache.get(roomId) ?? null;
+  }
+
+  static getCachedContact(_user: string, contactId: string): any | null {
+    return contactCache.get(contactId) ?? null;
+  }
+
+  static clearCache(_user?: string): void {
+    roomCache.clear();
+    contactCache.clear();
+  }
+
+  // ── Lifecycle ──────────────────────────────────────────────────────
+
+  static async stopBot(_username?: string): Promise<void> {
+    // wx4py bridge handles its own lifecycle; just clear our state
+    initialized = false;
+    botInstance = null;
+    loginTime = null;
+    this.clearCache();
+  }
+
+  /** Try to connect to wx4py bridge and mark as logged in if reachable */
+  static async initBridge(): Promise<boolean> {
+    try {
+      const status = await wxBridge.status();
+      if (status.connected) {
+        loginTime = new Date().toISOString();
+        initialized = true;
+        ensureBot();
+        console.log('[BotManager] wx4py bridge connected');
+        return true;
+      }
+      console.warn('[BotManager] wx4py bridge running but WeChat not connected');
+      return false;
+    } catch (e) {
+      console.warn('[BotManager] wx4py bridge not reachable:', (e as Error).message);
+      return false;
     }
+  }
+}
 
-    static cacheContacts(username: string, contacts: any[]): void {
-        if (!this.contactCaches.has(username)) {
-            this.contactCaches.set(username, new Map());
-        }
-        const cache = this.contactCaches.get(username)!;
-        for (const contact of contacts) {
-            cache.set(contact.id, contact);
-        }
-        console.log(`[BotManager] Contact cache updated for ${username}: ${cache.size} contacts`);
-    }
+// ── Backward-compat helpers (used by existing API code) ──────────────
 
-    // ── Cache read ───────────────────────────────────────────────────────────
+function cacheRooms(rooms: any[]): void {
+  for (const r of rooms) roomCache.set(r.id, r);
+}
 
-    static getCachedRoom(username: string, roomId: string): any | null {
-        const cache = this.roomCaches.get(username);
-        if (!cache) return null;
-        const hit = cache.get(roomId);
-        if (!hit) {
-            const keys = Array.from(cache.keys()).slice(0, 3);
-            console.log(`[BotManager] Room cache miss for ${roomId}. Cache keys sample: ${JSON.stringify(keys)}`);
-        }
-        return hit ?? null;
-    }
-
-    static getCachedContact(username: string, contactId: string): any | null {
-        return this.contactCaches.get(username)?.get(contactId) ?? null;
-    }
-
-    // ── Cache invalidation ───────────────────────────────────────────────────
-
-    static clearCache(username: string): void {
-        const roomCount = this.roomCaches.get(username)?.size ?? 0;
-        const contactCount = this.contactCaches.get(username)?.size ?? 0;
-        this.roomCaches.delete(username);
-        this.contactCaches.delete(username);
-        console.log(`[BotManager] Cache cleared for ${username} (was: ${roomCount} rooms, ${contactCount} contacts)`);
-    }
-
-    // ── Existing accessors ───────────────────────────────────────────────────
-
-    static getQrCode(username: string): string | null {
-        return this.qrCodes.get(username) || null;
-    }
-
-    static getLoginTime(username: string): string | null {
-        return this.loginTimes.get(username) || null;
-    }
-
-    static getBot(username: string): Wechaty | any {
-        if (this.instances.has(username)) {
-            return this.instances.get(username)!;
-        }
-
-        // Use MockBot for 'test' user
-        if (username === 'test') {
-            console.log(`[BotManager] Initializing MockBot for ${username}`);
-            const mockBot = new MockBot(username);
-            this.instances.set(username, mockBot);
-            // Simulate login time immediately
-            this.loginTimes.set(username, new Date().toISOString());
-            return mockBot;
-        }
-
-        const userDir = UserManager.getUserDir(username);
-        // Wechaty name determines the memory-card location.
-        // If name is 'users/admin/bot', it creates 'users/admin/bot.memory-card.json'
-        // We need to be careful with paths. Wechaty appends .memory-card.json
-        const botName = path.join('users', username, 'bot');
-
-        console.log(`Initializing bot for ${username} at ${botName}`);
-
-        const bot = WechatyBuilder.build({
-            name: botName,
-            puppet: 'wechaty-puppet-wechat',
-            puppetOptions: {
-                uos: true
-            }
-        });
-
-        // Setup basic listeners
-        bot.on('scan', async (qrcode, status) => {
-             console.log(`[${username}] Scan QR Code to login: ${status}\n${qrcode}`);
-             try {
-                 const qrcodeImageUrl = await QRCode.toDataURL(qrcode);
-                 console.log(`[${username}] QR Image generated successfully`);
-                 BotManager.qrCodes.set(username, qrcodeImageUrl);
-             } catch (e) {
-                 console.error(`[${username}] Failed to generate QR code image:`, e);
-             }
-        });
-
-        bot.on('login', user => {
-            console.log(`[${username}] User ${user} logged in`);
-            BotManager.qrCodes.delete(username);
-            BotManager.loginTimes.set(username, new Date().toISOString());
-
-            // Pre-warm room/contact caches every time the bot (re-)logs in,
-            // including auto-restarts triggered by watchdog logout events.
-            // Fire-and-forget — must never throw into the event loop.
-            const prewarm = (label: string) => Promise.all([
-                bot.Room.findAll().then((rooms: any[]) => {
-                    BotManager.cacheRooms(username, rooms);
-                    console.log(`[${username}] Pre-warmed ${rooms.length} rooms (${label})`);
-                }),
-                bot.Contact.findAll().then((contacts: any[]) => {
-                    const friends = contacts.filter((c: any) => c.friend());
-                    BotManager.cacheContacts(username, friends);
-                    console.log(`[${username}] Pre-warmed ${friends.length} contacts (${label})`);
-                })
-            ]).catch(e => console.error(`[${username}] Cache pre-warm failed (${label}):`, e));
-
-            // Immediate pre-warm — may be partial if WeChat hasn't finished syncing
-            prewarm('immediate');
-            // Delayed pre-warm after 60s — catches rooms not yet synced at login time
-            setTimeout(() => prewarm('delayed-60s'), 60_000);
-        });
-        bot.on('logout', async user => {
-            console.log(`[${username}] User ${user} logged out`);
-            BotManager.loginTimes.delete(username);
-            BotManager.qrCodes.delete(username);
-            // Session is dead — cached room/contact objects are invalid
-            BotManager.clearCache(username);
-
-            // Auto-restart so the scan QR flow begins again.
-            // Guard against concurrent restarts (e.g. rapid logout events).
-            if (BotManager.restartingUsers.has(username)) return;
-            BotManager.restartingUsers.add(username);
-
-            console.log(`[${username}] Session expired — scheduling auto-restart in 3s`);
-            setTimeout(async () => {
-                try {
-                    await BotManager.stopBot(username);
-                    BotManager.getBot(username);
-                    console.log(`[${username}] Auto-restart complete, waiting for QR scan`);
-                } catch (e) {
-                    console.error(`[${username}] Auto-restart failed:`, e);
-                } finally {
-                    BotManager.restartingUsers.delete(username);
-                }
-            }, 3000);
-        });
-        bot.on('message', msg => console.log(`[${username}] Message: ${msg}`));
-        // Suppress GError: NOPUPPET which can happen during startup check
-        bot.on('error', e => {
-            if (e.message.includes('NOPUPPET')) return;
-            console.error(`[${username}] Error:`, e);
-        });
-
-        // Start the bot
-        bot.start()
-            .then(() => console.log(`[${username}] Bot started`))
-            .catch(e => console.error(`[${username}] Failed to start bot`, e));
-
-        this.instances.set(username, bot);
-        return bot;
-    }
-
-    static async stopBot(username: string) {
-        if (this.instances.has(username)) {
-            const bot = this.instances.get(username)!;
-            await bot.stop();
-            this.instances.delete(username);
-        }
-        // Clear cache regardless — the new session will repopulate it
-        this.clearCache(username);
-    }
+function cacheContacts(contacts: any[]): void {
+  for (const c of contacts) contactCache.set(c.id, c);
 }

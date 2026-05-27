@@ -1,13 +1,15 @@
 {
   "name": "server",
-  "version": "1.0.0",
-  "description": "",
+  "version": "2.0.0",
+  "description": "WxSchedule — WeChat scheduled messaging (wx4py backend)",
   "main": "src/index.ts",
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "bridge": "python pybridge/bridge.py",
+    "bridge:install": "pip install -r pybridge/requirements.txt"
   },
   "keywords": [],
   "author": "",
@@ -19,9 +21,6 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.0.9",
     "@types/node-schedule": "^2.1.8",
-    "@types/qrcode": "^1.5.6",
-    "nodemon": "^3.1.11",
-    "ts-node": "^10.9.2",
     "tsx": "^4.19.2",
     "typescript": "^5.9.3"
   },
@@ -33,12 +32,8 @@
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
-    "file-box": "^1.5.5",
     "jsonwebtoken": "^9.0.3",
     "lowdb": "^7.0.1",
-    "node-schedule": "^2.1.1",
-    "qrcode": "^1.5.4",
-    "wechaty": "^1.20.2",
-    "wechaty-puppet-wechat": "^1.18.4"
+    "node-schedule": "^2.1.1"
   }
 }

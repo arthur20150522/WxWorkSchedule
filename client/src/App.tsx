@@ -22,8 +22,6 @@ function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'groups' | 'templates' | 'tasks' | 'logs'>('dashboard');
   const [botStatus, setBotStatus] = useState<BotStatus>({ status: 'offline' });
   const [isStatusLoading, setIsStatusLoading] = useState(true);
-  const [qrCode, setQrCode] = useState<string | null>(null);
-  
   const [groups, setGroups] = useState<Group[]>([]);
   const [contacts, setContacts] = useState<{id: string, name: string}[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -71,13 +69,6 @@ function App() {
     try {
       const res = await axios.get('/api/status');
       setBotStatus(res.data);
-      
-      if (res.data.status === 'waiting_for_scan') {
-        const qrRes = await axios.get('/api/qr');
-        setQrCode(qrRes.data.qr);
-      } else {
-        setQrCode(null);
-      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -252,7 +243,6 @@ function App() {
               <DashboardView
                   botStatus={botStatus}
                   isStatusLoading={isStatusLoading}
-                  qrCode={qrCode}
               />
           )}
           {activeTab === 'groups' && (

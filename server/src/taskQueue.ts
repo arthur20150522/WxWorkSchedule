@@ -1,7 +1,7 @@
 import { Task } from './dbManager.js';
 import { BotManager } from './botManager.js';
 import { DBManager, addLog } from './dbManager.js';
-import { FileBox } from 'file-box';
+import { wxBridge } from './wxBridge.js';
 import { addDays, addWeeks, addMonths, addMinutes, addHours } from 'date-fns';
 
 export class TaskQueue {
@@ -22,8 +22,6 @@ export class TaskQueue {
     }
 
     public add(task: Task) {
-        // Prevent duplicate queuing if needed, but for now just push
-        // Check if task is already in queue to avoid double execution if scheduler picks it up again
         if (!this.queue.find(t => t.id === task.id)) {
             console.log(`[TaskQueue] Adding task ${task.id} to queue for ${this.username}`);
             this.queue.push(task);
@@ -43,7 +41,6 @@ export class TaskQueue {
                 } catch (e) {
                     console.error(`[TaskQueue] Error executing task ${task.id}:`, e);
                 }
-                // Wait 500ms between tasks
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
         }
@@ -54,10 +51,8 @@ export class TaskQueue {
     private async executeTask(task: Task) {
         const username = this.username;
         console.log(`[${username}] Executing task ${task.id}`);
-        const bot = BotManager.getBot(username);
 
-        // Mark as processing immediately so the scheduler cannot re-queue this
-        // task on the next 10-second tick while we are waiting for WeChat to respond.
+        // Mark as processing
         try {
             const dbPre = await DBManager.getDb(username);
             await dbPre.update(({ tasks }) => {
@@ -69,65 +64,49 @@ export class TaskQueue {
         }
 
         try {
-            let target: any;
-
-            if (task.targetType === 'group') {
-                // Cache hit: room was fetched when user viewed the groups list
-                target = BotManager.getCachedRoom(username, task.targetId);
-                if (target) {
-                    console.log(`[${username}] Cache hit for room ${task.targetId}`);
-                } else {
-                    // Cache miss: refresh entire room cache then look up
-                    console.log(`[${username}] Cache miss for room ${task.targetId}, refreshing cache`);
-                    const allRooms = await bot.Room.findAll();
-                    BotManager.cacheRooms(username, allRooms);
-                    target = BotManager.getCachedRoom(username, task.targetId);
-                    if (!target) {
-                        target = await bot.Room.find({ topic: task.targetName });
-                    }
-                    if (target) {
-                        BotManager.cacheRooms(username, [target]);
-                    }
-                }
-            } else {
-                // Cache hit: contact was fetched when user viewed the contacts list
-                target = BotManager.getCachedContact(username, task.targetId);
-                if (target) {
-                    console.log(`[${username}] Cache hit for contact ${task.targetId}`);
-                } else {
-                    // Cache miss: fetch from WeChat and populate cache for next time
-                    console.log(`[${username}] Cache miss for contact ${task.targetId}, fetching from WeChat`);
-                    target = await bot.Contact.find({ id: task.targetId });
-                    if (!target) {
-                        target = await bot.Contact.find({ name: task.targetName });
-                    }
-                    if (target) {
-                        BotManager.cacheContacts(username, [target]);
-                    }
-                }
-            }
-
-            if (!target) {
-                throw new Error(`Target not found: ${task.targetName} (${task.targetId})`);
-            }
-
-            // Send content
+            const targetName = task.targetName || task.targetId;
+            const targetType = task.targetType;
             const currentIndex = task.currentContentIndex || 0;
             const contentToSend = task.content[currentIndex];
-            
-            if (contentToSend) {
-                await target.say(contentToSend);
-            } else {
+
+            if (!contentToSend) {
                 console.warn(`[${username}] Task ${task.id} has no content at index ${currentIndex}`);
+            } else {
+                // Prefer cached target with .say() (works for MockBot and cached bridge results)
+                let sent = false;
+                let target: any = null;
+
+                if (targetType === 'group') {
+                    target = BotManager.getCachedRoom(username, task.targetId);
+                } else {
+                    target = BotManager.getCachedContact(username, task.targetId);
+                }
+
+                if (target && typeof target.say === 'function') {
+                    console.log(`[${username}] Using cached target for ${targetName}`);
+                    await target.say(contentToSend);
+                    sent = true;
+                } else {
+                    // Fall back to wxBridge direct send
+                    console.log(`[${username}] Sending via wxBridge to [${targetType}] ${targetName}: ${contentToSend.substring(0, 50)}...`);
+                    const result = await wxBridge.send(targetName, contentToSend, targetType);
+                    if (!result.success) {
+                        throw new Error(result.error || 'wx4py send failed');
+                    }
+                    sent = true;
+                }
+
+                if (!sent) {
+                    throw new Error(`No way to send to ${targetName} — target not cached and bridge unavailable`);
+                }
             }
 
-            // Update status or Reschedule
+            // Update status / reschedule
             const db = await DBManager.getDb(username);
             await db.update(({ tasks }) => {
                 const t = tasks.find(x => x.id === task.id);
                 if (t) {
                     if (t.recurrence && t.recurrence !== 'once') {
-                        // Calculate next run time
                         const currentSchedule = new Date(t.scheduleTime);
                         let nextSchedule = currentSchedule;
 
@@ -141,7 +120,6 @@ export class TaskQueue {
                             else if (t.intervalUnit === 'day') nextSchedule = addDays(currentSchedule, val);
                         }
 
-                        // Ensure next schedule is in the future
                         const now = new Date();
                         while (nextSchedule <= now) {
                             if (t.recurrence === 'daily') nextSchedule = addDays(nextSchedule, 1);
@@ -157,12 +135,8 @@ export class TaskQueue {
 
                         t.scheduleTime = nextSchedule.toISOString();
                         t.status = 'pending';
-                        
-                        // Cycle content index
-                        const nextIndex = (currentIndex + 1) % t.content.length;
-                        t.currentContentIndex = nextIndex;
-
-                        console.log(`[${username}] Rescheduled task ${t.id} to ${t.scheduleTime}. Next content index: ${nextIndex}`);
+                        t.currentContentIndex = (currentIndex + 1) % t.content.length;
+                        console.log(`[${username}] Rescheduled task ${t.id} to ${t.scheduleTime}. Next content index: ${t.currentContentIndex}`);
                     } else {
                         t.status = 'success';
                     }
@@ -173,16 +147,11 @@ export class TaskQueue {
 
         } catch (error: any) {
             console.error(`[${username}] Task ${task.id} failed:`, error);
-
             const db = await DBManager.getDb(username);
             await db.update(({ tasks }) => {
                 const t = tasks.find(x => x.id === task.id);
-                if (t) {
-                    t.status = 'failed';
-                    t.error = error.message;
-                }
+                if (t) { t.status = 'failed'; t.error = error.message; }
             });
-
             await addLog(username, 'error', `Task ${task.id} failed: ${error.message}`, task.id);
         }
     }

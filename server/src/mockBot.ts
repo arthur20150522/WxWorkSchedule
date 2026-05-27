@@ -1,133 +1,51 @@
-
 export class MockBot {
     public isLoggedIn: boolean = true;
-    public name: string = 'MockBot';
+    public name: string = 'wx4py-mock';
 
-    constructor(name: string) {
-        this.name = name;
-    }
+    constructor(_name: string) {}
 
-    // Mock currentUser
     public get currentUser() {
-        return {
-            name: () => 'Test User',
-            id: 'wxid_testuser123'
-        };
+        return { name: () => 'Test User', id: 'wx4py_mock_user' };
     }
 
-    // Mock Room
     public get Room() {
         const rooms = [
-            {
-                id: 'room_001',
-                topic: async () => '产品研发部',
-                memberAll: async () => new Array(15), // Mock 15 members
-                say: async (text: string) => console.log(`[MockBot] Room(room_001) say: ${text}`)
-            },
-            {
-                id: 'room_002',
-                topic: async () => '周末约球群',
-                memberAll: async () => new Array(8),
-                say: async (text: string) => console.log(`[MockBot] Room(room_002) say: ${text}`)
-            },
-            {
-                id: 'room_003',
-                topic: async () => '家庭群',
-                memberAll: async () => new Array(6),
-                say: async (text: string) => console.log(`[MockBot] Room(room_003) say: ${text}`)
-            },
-            {
-                id: 'room_004',
-                topic: async () => '测试报警群',
-                memberAll: async () => new Array(3),
-                say: async (text: string) => console.log(`[MockBot] Room(room_004) say: ${text}`)
-            }
+            { id: 'room_001', topic: async () => '产品研发部', memberAll: async () => new Array(15), say: async (text: string) => console.log(`[Mock] Room(room_001): ${text}`) },
+            { id: 'room_002', topic: async () => '周末约球群', memberAll: async () => new Array(8), say: async (text: string) => console.log(`[Mock] Room(room_002): ${text}`) },
+            { id: 'room_003', topic: async () => '家庭群', memberAll: async () => new Array(6), say: async (text: string) => console.log(`[Mock] Room(room_003): ${text}`) },
+            { id: 'room_004', topic: async () => '测试报警群', memberAll: async () => new Array(3), say: async (text: string) => console.log(`[Mock] Room(room_004): ${text}`) },
         ];
-
         return {
-            findAll: async () => {
-                return rooms;
-            },
+            findAll: async () => rooms,
             find: async (query: any) => {
-                if (query.id) {
-                    return rooms.find(r => r.id === query.id);
-                }
-                if (query.topic) {
-                    for (const room of rooms) {
-                        if (await room.topic() === query.topic) {
-                            return room;
-                        }
-                    }
+                for (const room of rooms) {
+                    if (room.id === query.id) return room;
+                    if (query.topic && (await room.topic()) === query.topic) return room;
                 }
                 return null;
-            }
+            },
         };
     }
 
-    // Mock Contact
     public get Contact() {
         const contacts = [
-            {
-                id: 'contact_001',
-                name: () => '张三',
-                friend: () => true,
-                type: () => 1, // Unknown/Personal
-                say: async (text: string) => console.log(`[MockBot] Contact(contact_001) say: ${text}`)
-            },
-            {
-                id: 'contact_002',
-                name: () => '李四',
-                friend: () => true,
-                type: () => 1,
-                say: async (text: string) => console.log(`[MockBot] Contact(contact_002) say: ${text}`)
-            },
-            {
-                id: 'contact_003',
-                name: () => '文件传输助手',
-                friend: () => true,
-                type: () => 1,
-                say: async (text: string) => console.log(`[MockBot] Contact(contact_003) say: ${text}`)
-            },
-            {
-                id: 'contact_004',
-                name: () => '王五 (非好友)',
-                friend: () => false,
-                type: () => 1,
-                say: async (text: string) => console.log(`[MockBot] Contact(contact_004) say: ${text}`)
-            }
+            { id: 'contact_001', name: () => '张三', friend: () => true, type: () => 1, say: async (text: string) => console.log(`[Mock] Contact(张三): ${text}`) },
+            { id: 'contact_002', name: () => '李四', friend: () => true, type: () => 1, say: async (text: string) => console.log(`[Mock] Contact(李四): ${text}`) },
+            { id: 'contact_003', name: () => '文件传输助手', friend: () => true, type: () => 1, say: async (text: string) => console.log(`[Mock] Contact(文件传输助手): ${text}`) },
         ];
-
         return {
-            findAll: async () => {
-                return contacts;
-            },
+            findAll: async () => contacts,
             find: async (query: any) => {
-                if (query.id) {
-                    return contacts.find(c => c.id === query.id);
-                }
-                if (query.name) {
-                    for (const contact of contacts) {
-                        if (contact.name() === query.name) {
-                            return contact;
-                        }
-                    }
+                for (const c of contacts) {
+                    if (c.id === query.id) return c;
+                    if (query.name && c.name() === query.name) return c;
                 }
                 return null;
-            }
+            },
         };
     }
 
-    // Event listeners - do nothing
-    public on(event: string, listener: (...args: any[]) => void) {
-        return this;
-    }
-
-    // Lifecycle
-    public async start() {
-        console.log('[MockBot] Started');
-    }
-
-    public async stop() {
-        console.log('[MockBot] Stopped');
-    }
+    public on(_event: string, _listener: (...args: any[]) => void) { return this; }
+    public async start() { console.log('[MockBot] Started'); }
+    public async stop() { console.log('[MockBot] Stopped'); }
 }

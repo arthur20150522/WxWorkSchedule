@@ -8,11 +8,10 @@ import { LoginDuration } from '../components/LoginDuration';
 interface DashboardViewProps {
     botStatus: BotStatus;
     isStatusLoading: boolean;
-    qrCode: string | null;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
-    botStatus, isStatusLoading, qrCode
+    botStatus, isStatusLoading
 }) => {
     return (
           <div className="max-w-2xl mx-auto space-y-6">
@@ -29,15 +28,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <div className={clsx(
                   "inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium mb-4",
                   botStatus.status === 'logged_in' ? "bg-green-100 text-green-800" :
-                  botStatus.status === 'waiting_for_scan' ? "bg-yellow-100 text-yellow-800" :
                   "bg-gray-100 text-gray-800"
                 )}>
                   {botStatus.status === 'logged_in' && <CheckCircle className="w-4 h-4" />}
-                  {botStatus.status === 'waiting_for_scan' && <RefreshCw className="w-4 h-4 animate-spin" />}
-                  {botStatus.status === 'offline' && <XCircle className="w-4 h-4" />}
-                  {botStatus.status === 'logged_in' ? t.loggedIn : 
-                 botStatus.status === 'waiting_for_scan' ? t.waitingForScan : 
-                 t.offline}
+                  {botStatus.status !== 'logged_in' && <XCircle className="w-4 h-4" />}
+                  {botStatus.status === 'logged_in' ? t.wx4pyLoggedIn : t.wx4pyOffline}
                 </div>
 
                 {botStatus.status === 'logged_in' && botStatus.user && (
@@ -57,20 +52,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </div>
                 )}
 
-                {botStatus.status === 'waiting_for_scan' && qrCode && (
-                    <div className="mt-4 flex flex-col items-center">
-                    <p className="text-gray-500 mb-4">{t.scanQr}</p>
-                    <img 
-                        src={qrCode} 
-                        alt="QR Code" 
-                        className="w-64 h-64 border-2 border-gray-100 rounded-lg"
-                    />
-                    </div>
-                )}
-                
-                {botStatus.status === 'offline' && (
+                {botStatus.status !== 'logged_in' && (
                     <div className="mt-4 text-gray-500">
-                        Check server logs if bot doesn't start.
+                        {t.wx4pyNotConnected}
                     </div>
                 )}
               </>
