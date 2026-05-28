@@ -131,10 +131,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
         """Get all groups by scanning chat list with common chars."""
         wx = get_wx()
         # wx4py doesn't have a direct "list all groups" API.
-        # Search with common Chinese surname chars as a heuristic scan.
-        # Return results from multiple searches combined.
+        # Search with letters + digits + common Chinese chars as a heuristic scan.
         scan_chars = ['', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
-                      'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z']
+                      'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+                      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+                      '技', '项', '工', '学', '交', '通', '活', '开', '产', '设',
+                      '运', '管', '市', '创', '投', '教', '健', '娱', '生', '美',
+                      '游', '音', '读', '摄', '宠', '汽', '房', '财', '电', '直',
+                      '医', '法', '金', '设', '家', '车', '食', '旅', '运', '研']
         seen = set()
         groups = []
         for ch in scan_chars:
@@ -149,7 +153,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         if name in seen:
                             continue
                         seen.add(name)
-                        # Only include group-type results
                         if '群' in category:
                             groups.append({
                                 'id': name,
@@ -165,7 +168,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
         """Get all contacts by scanning chat list."""
         wx = get_wx()
         scan_chars = ['', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
-                      'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z']
+                      'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+                      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+                      '李', '王', '张', '刘', '陈', '杨', '赵', '黄', '周', '吴',
+                      '徐', '孙', '马', '胡', '朱', '郭', '何', '罗', '高', '林']
         seen = set()
         contacts = []
         for ch in scan_chars:

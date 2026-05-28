@@ -32,12 +32,15 @@ app.post('/api/login', async (req, res) => {
             BotManager.getBot(username);
             await addLog(username, 'info', `User ${username} logged in from ${ip}`);
 
-            // Background cache warm
+            // Background cache warm (skip if fresh)
             try {
-                const groups = await wxBridge.groups();
-                BotManager.cacheRooms(username, groups);
-                const contacts = await wxBridge.contacts();
-                BotManager.cacheContacts(username, contacts);
+                if (!BotManager.isCacheFresh()) {
+                    const groups = await wxBridge.groups();
+                    BotManager.cacheRooms(username, groups);
+                    const contacts = await wxBridge.contacts();
+                    BotManager.cacheContacts(username, contacts);
+                    BotManager.markCacheFresh();
+                }
             } catch (e) {
                 console.warn('[Login] Cache warm skipped:', (e as Error).message);
             }
@@ -145,24 +148,32 @@ apiRouter.get('/search', async (req, res) => {
     }
 });
 
-// Get Groups — via bridge scan
+// Get Groups — via bridge scan (cached 5 min)
 apiRouter.get('/groups', async (req, res) => {
     const user = (req as AuthRequest).user!;
     try {
+        if (BotManager.isCacheFresh()) {
+            return res.json(BotManager.getCachedRooms());
+        }
         const groups = await wxBridge.groups();
         BotManager.cacheRooms(user, groups);
+        BotManager.markCacheFresh();
         res.json(groups);
     } catch (e) {
         handleError(res, e);
     }
 });
 
-// Get Contacts — via bridge scan
+// Get Contacts — via bridge scan (cached 5 min)
 apiRouter.get('/contacts', async (req, res) => {
     const user = (req as AuthRequest).user!;
     try {
+        if (BotManager.isCacheFresh()) {
+            return res.json(BotManager.getCachedContacts());
+        }
         const contacts = await wxBridge.contacts();
         BotManager.cacheContacts(user, contacts);
+        BotManager.markCacheFresh();
         res.json(contacts);
     } catch (e) {
         handleError(res, e);

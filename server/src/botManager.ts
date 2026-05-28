@@ -7,6 +7,8 @@ const USE_MOCK = process.env.USE_MOCK_BOT === 'true';
 let roomCache: Map<string, any> = new Map();
 let contactCache: Map<string, any> = new Map();
 let loginTime: string | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 let botInstance: any = null;
 let initialized = false;
@@ -131,6 +133,23 @@ export class BotManager {
   static clearCache(_user?: string): void {
     roomCache.clear();
     contactCache.clear();
+    cacheTimestamp = 0;
+  }
+
+  static isCacheFresh(): boolean {
+    return Date.now() - cacheTimestamp < CACHE_TTL;
+  }
+
+  static markCacheFresh(): void {
+    cacheTimestamp = Date.now();
+  }
+
+  static getCachedRooms(): any[] {
+    return Array.from(roomCache.values());
+  }
+
+  static getCachedContacts(): any[] {
+    return Array.from(contactCache.values());
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────
@@ -167,8 +186,10 @@ export class BotManager {
 
 function cacheRooms(rooms: any[]): void {
   for (const r of rooms) roomCache.set(r.id, r);
+  cacheTimestamp = Date.now();
 }
 
 function cacheContacts(contacts: any[]): void {
   for (const c of contacts) contactCache.set(c.id, c);
+  cacheTimestamp = Date.now();
 }
