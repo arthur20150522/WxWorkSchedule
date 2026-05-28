@@ -11,6 +11,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const main = async () => {
+  // Polyfill fetch for Node.js < 18
+  if (!globalThis.fetch) {
+    const { default: nodeFetch } = await import('node-fetch');
+    (globalThis as any).fetch = nodeFetch;
+  }
+
   // Try to connect to wx4py bridge at startup
   const connected = await BotManager.initBridge();
   if (connected) {
