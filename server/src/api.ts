@@ -32,18 +32,7 @@ app.post('/api/login', async (req, res) => {
             BotManager.getBot(username);
             await addLog(username, 'info', `User ${username} logged in from ${ip}`);
 
-            // Background cache warm (skip if fresh)
-            try {
-                if (!BotManager.isCacheFresh()) {
-                    const groups = await wxBridge.groups();
-                    BotManager.cacheRooms(username, groups);
-                    const contacts = await wxBridge.contacts();
-                    BotManager.cacheContacts(username, contacts);
-                    BotManager.markCacheFresh();
-                }
-            } catch (e) {
-                console.warn('[Login] Cache warm skipped:', (e as Error).message);
-            }
+            // Cache warm skipped — groups/contacts scanned on demand
 
             res.json({ success: true, token, username });
         } else {

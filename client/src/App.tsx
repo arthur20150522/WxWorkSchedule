@@ -23,7 +23,7 @@ function App() {
   const [botStatus, setBotStatus] = useState<BotStatus>({ status: 'offline' });
   const [isStatusLoading, setIsStatusLoading] = useState(true);
   const [groups, setGroups] = useState<Group[]>([]);
-  const [contacts, setContacts] = useState<{id: string, name: string}[]>([]);
+  const contacts: {id: string, name: string}[] = [];
   const [tasks, setTasks] = useState<Task[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   
@@ -82,7 +82,6 @@ function App() {
       setGroups(res.data);
     } catch (e: any) {
       if (e.response && e.response.status === 503) {
-          // Bot not ready, ignore
           setGroups([]);
       } else {
           console.error(e);
@@ -90,17 +89,13 @@ function App() {
     }
   };
 
-  const fetchContacts = async () => {
+  const searchGroups = async (q: string) => {
+    if (!q || q.length < 1) { setGroups([]); return; }
     try {
-        const res = await axios.get('/api/contacts');
-        setContacts(res.data);
-    } catch (e: any) {
-        if (e.response && e.response.status === 503) {
-            // Bot not ready, ignore
-            setContacts([]);
-        } else {
-            console.error(e);
-        }
+      const res = await axios.get('/api/search', { params: { q, type: 'group' } });
+      setGroups(res.data.results || []);
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -200,14 +195,9 @@ function App() {
     
     if (activeTab === 'templates') {
         fetchTemplates();
-        fetchGroups();
-        fetchContacts();
     }
     
-    if (botStatus.status === 'logged_in' && botStatus.ready) {
-      fetchGroups();
-      fetchContacts();
-    }
+    // Groups/contacts scanned on-demand via search — no auto-fetch
   }, [botStatus.status, botStatus.ready, isAuthenticated, activeTab]);
 
   if (!isAuthenticated) {
@@ -246,10 +236,11 @@ function App() {
               />
           )}
           {activeTab === 'groups' && (
-              <GroupsView 
-                  groups={groups} 
-                  fetchGroups={fetchGroups} 
-                  botStatus={botStatus} 
+              <GroupsView
+                  groups={groups}
+                  fetchGroups={fetchGroups}
+                  searchGroups={searchGroups}
+                  botStatus={botStatus}
                   onSendMessage={(group) => {
                       setDraftTask({ targetId: group.id, targetType: 'group' });
                       setActiveTab('tasks');
