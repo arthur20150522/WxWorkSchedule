@@ -1,4 +1,8 @@
-// ── LiveLog (实时发送记录) ──────────────────────────────
+// ── WeeklySlot (每周时段) ───────────────────────────────
+export interface WeeklySlot {
+  days: string[];   // "1"=Mon.."7"=Sun
+  time: string;     // "HH:mm"
+}
 export interface LiveLog {
   id: string;
   timestamp: string;
@@ -52,7 +56,7 @@ export interface Template {
   intervalValue?: number;
   intervalUnit?: 'minute' | 'hour' | 'day';
   uiTime?: string;
-  uiWeekdays?: string[];
+  weeklySlots?: WeeklySlot[];
   uiDayOfMonth?: string;
   createdAt: string;
 }
@@ -74,7 +78,7 @@ export interface Task {
   intervalUnit?: 'minute' | 'hour' | 'day';
   // UI helper fields for TaskDraft
   uiTime?: string;
-  uiWeekdays?: string[];
+  weeklySlots?: WeeklySlot[];
   uiDayOfMonth?: string;
 }
 

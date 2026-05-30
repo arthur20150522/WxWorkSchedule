@@ -1,3 +1,9 @@
+// ── WeeklySlot (每周时段) ───────────────────────────────
+export interface WeeklySlot {
+  days: string[];   // "1"=Mon.."7"=Sun
+  time: string;     // "HH:mm"
+}
+
 // ── Contact (通讯录) ──────────────────────────────────────
 export interface Contact {
   id: string;
@@ -18,7 +24,7 @@ export interface Template {
   intervalValue?: number;
   intervalUnit?: 'minute' | 'hour' | 'day';
   uiTime?: string;
-  uiWeekdays?: string[];  // Mon=1..Sun=7, multi-select
+  weeklySlots?: WeeklySlot[];
   uiDayOfMonth?: string;
   createdAt: string;
 }
@@ -36,7 +42,7 @@ export interface Task {
   recurrence: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
   intervalValue?: number;
   intervalUnit?: 'minute' | 'hour' | 'day';
-  uiWeekdays?: string[];  // Mon=1..Sun=7, multi-select
+  weeklySlots?: WeeklySlot[];
   status: 'pending' | 'processing' | 'success' | 'failed';
   createdAt: string;
   updatedAt?: string;

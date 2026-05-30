@@ -16,23 +16,30 @@ export function calculateNextTime(task: Task): string {
   switch (task.recurrence) {
     case 'daily':    next = addDays(current, 1); break;
     case 'weekly': {
-      const weekdays = task.uiWeekdays?.map(Number) || [];
-      if (weekdays.length === 0) {
+      const slots = task.weeklySlots || [];
+      if (slots.length === 0) {
         next = addWeeks(current, 1);
       } else {
-        // Find next matching weekday
-        let found = false;
-        for (let i = 1; i <= 7; i++) {
-          const check = addDays(current, i);
-          const jsDay = check.getDay(); // 0=Sun..6=Sat
-          const cnDay = jsDay === 0 ? 7 : jsDay; // 1=Mon..7=Sun
-          if (weekdays.includes(cnDay)) {
-            next = check;
-            found = true;
-            break;
+        // Find nearest future slot
+        let best: Date | null = null;
+        for (const slot of slots) {
+          const [h, m] = (slot.time || '09:00').split(':').map(Number);
+          for (const d of (slot.days || [])) {
+            const cnDay = Number(d); // 1=Mon..7=Sun
+            const jsTarget = cnDay === 7 ? 0 : cnDay;
+            const todayJs = current.getDay();
+            let diff = jsTarget - todayJs;
+            if (diff <= 0) diff += 7;
+            const candidate = new Date(current);
+            candidate.setDate(candidate.getDate() + diff);
+            candidate.setHours(h || 9, m || 0, 0, 0);
+            if (candidate > current && (!best || candidate < best)) {
+              best = candidate;
+            }
           }
         }
-        if (!found) next = addWeeks(current, 1);
+        if (best) next = best;
+        else next = addWeeks(current, 1);
       }
       break;
     }
@@ -57,19 +64,26 @@ export function calculateNextTime(task: Task): string {
     switch (task.recurrence) {
       case 'daily':    next = addDays(next, 1); break;
       case 'weekly': {
-        const weekdays = task.uiWeekdays?.map(Number) || [];
-        if (weekdays.length > 0) {
-          let found = false;
-          for (let i = 1; i <= 7; i++) {
-            const check = addDays(next, i);
-            const jsDay = check.getDay();
-            const cnDay = jsDay === 0 ? 7 : jsDay;
-            if (weekdays.includes(cnDay)) { next = check; found = true; break; }
+        const slots = task.weeklySlots || [];
+        if (slots.length > 0) {
+          let best: Date | null = null;
+          for (const slot of slots) {
+            const [h, m] = (slot.time || '09:00').split(':').map(Number);
+            for (const d of (slot.days || [])) {
+              const cnDay = Number(d);
+              const jsTarget = cnDay === 7 ? 0 : cnDay;
+              const todayJs = next.getDay();
+              let diff = jsTarget - todayJs;
+              if (diff <= 0) diff += 7;
+              const candidate = new Date(next);
+              candidate.setDate(candidate.getDate() + diff);
+              candidate.setHours(h || 9, m || 0, 0, 0);
+              if (candidate > next && (!best || candidate < best)) best = candidate;
+            }
           }
-          if (!found) next = addWeeks(next, 1);
-        } else {
-          next = addWeeks(next, 1);
+          if (best) { next = best; break; }
         }
+        next = addWeeks(next, 1);
         break;
       }
       case 'monthly':  next = addMonths(next, 1); break;

@@ -19,19 +19,26 @@ function advanceScheduleTime(task: any): string | null {
         next = addDays(next, 1);
         break;
       case 'weekly': {
-        const weekdays = task.uiWeekdays?.map(Number) || [];
-        if (weekdays.length > 0) {
-          let found = false;
-          for (let d = 1; d <= 7; d++) {
-            const check = addDays(next, d);
-            const jsDay = check.getDay();
-            const cnDay = jsDay === 0 ? 7 : jsDay;
-            if (weekdays.includes(cnDay)) { next = check; found = true; break; }
+        const slots = task.weeklySlots || [];
+        if (slots.length > 0) {
+          let best: Date | null = null;
+          for (const slot of slots) {
+            const [h, m] = (slot.time || '09:00').split(':').map(Number);
+            for (const d of (slot.days || [])) {
+              const cnDay = Number(d);
+              const jsTarget = cnDay === 7 ? 0 : cnDay;
+              const todayJs = next.getDay();
+              let diff = jsTarget - todayJs;
+              if (diff <= 0) diff += 7;
+              const candidate = new Date(next);
+              candidate.setDate(candidate.getDate() + diff);
+              candidate.setHours(h || 9, m || 0, 0, 0);
+              if (candidate > next && (!best || candidate < best)) best = candidate;
+            }
           }
-          if (!found) next = addDays(next, 7);
-        } else {
-          next = addDays(next, 7);
+          if (best) { next = best; break; }
         }
+        next = addDays(next, 7);
         break;
       }
       case 'monthly':

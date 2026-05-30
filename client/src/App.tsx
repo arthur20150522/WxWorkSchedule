@@ -128,7 +128,7 @@ function App() {
               intervalValue: template.intervalValue,
               intervalUnit: template.intervalUnit,
               uiTime: template.uiTime,
-              uiWeekdays: template.uiWeekdays,
+              weeklySlots: template.weeklySlots,
               uiDayOfMonth: template.uiDayOfMonth
           });
           setActiveTab('tasks');

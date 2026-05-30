@@ -19,7 +19,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
 }) => {
     type TaskDraft = Partial<Task> & {
         uiTime: string;
-        uiWeekdays: string[];
+        weeklySlots: { days: string[]; time: string }[];
         uiDayOfMonth: string;
         intervalValue: number;
         intervalUnit: 'minute' | 'hour' | 'day';
@@ -33,7 +33,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
       scheduleTime: '',
       recurrence: 'once',
       uiTime: '09:00',
-      uiWeekdays: ['1'],
+      weeklySlots: [{ days: ['1'], time: '09:00' }],
       uiDayOfMonth: '1',
       intervalValue: 30,
       intervalUnit: 'minute'
@@ -81,12 +81,13 @@ export const TasksView: React.FC<TasksViewProps> = ({
         const timeStr = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`;
         if (recurrence === 'daily') return `${t.daily} ${timeStr}`;
         if (recurrence === 'weekly') {
-            const days = task.uiWeekdays || [];
+            const slots = task.weeklySlots || [];
             const names = ['一','二','三','四','五','六','日'];
-            const dayStr = days.length > 0
-                ? days.map((d: string) => names[Number(d)-1]).join('、')
-                : '?';
-            return `周${dayStr} ${timeStr}`;
+            const parts = slots.map((s: any) => {
+                const dayStr = (s.days || []).map((d: string) => names[Number(d)-1]).join('');
+                return `周${dayStr} ${s.time}`;
+            });
+            return parts.join(', ') || t.weekly;
         }
         if (recurrence === 'monthly') return `${t.monthly} ${timeStr}`;
         if (recurrence === 'interval') {
@@ -131,24 +132,22 @@ export const TasksView: React.FC<TasksViewProps> = ({
             if (newTask.recurrence === 'daily') {
                 if (nextRun <= now) nextRun.setDate(nextRun.getDate() + 1);
             } else if (newTask.recurrence === 'weekly') {
-                const weekdays = (newTask.uiWeekdays || ['1']).map(Number);
-                let found = false;
-                for (let d = 0; d < 7; d++) {
-                    const check = new Date(now);
-                    check.setDate(check.getDate() + d);
-                    const jsDay = check.getDay();
-                    const cnDay = jsDay === 0 ? 7 : jsDay;
-                    if (weekdays.includes(cnDay)) {
-                        const [h, m] = newTask.uiTime.split(':').map(Number);
-                        check.setHours(h, m, 0, 0);
-                        if (check > now || d > 0) {
-                            nextRun = check;
-                            found = true;
-                            break;
-                        }
+                const slots = newTask.weeklySlots || [{ days: ['1'], time: '09:00' }];
+                let best: Date | null = null;
+                for (const slot of slots) {
+                    const [h, m] = (slot.time || '09:00').split(':').map(Number);
+                    for (const d of (slot.days || [])) {
+                        const cnDay = Number(d);
+                        const jsTarget = cnDay === 7 ? 0 : cnDay;
+                        let diff = jsTarget - now.getDay();
+                        if (diff <= 0) diff += 7;
+                        const candidate = new Date();
+                        candidate.setDate(candidate.getDate() + diff);
+                        candidate.setHours(h || 9, m || 0, 0, 0);
+                        if (candidate > now && (!best || candidate < best)) best = candidate;
                     }
                 }
-                if (!found) nextRun.setDate(nextRun.getDate() + 7);
+                if (best) nextRun = best;
             } else if (newTask.recurrence === 'monthly') {
                 const targetDate = parseInt(newTask.uiDayOfMonth);
                 nextRun.setDate(targetDate);
@@ -227,19 +226,22 @@ export const TasksView: React.FC<TasksViewProps> = ({
                     if (tpl.recurrence === 'daily') {
                         if (next <= now) next.setDate(next.getDate() + 1);
                     } else if (tpl.recurrence === 'weekly') {
-                        const weekdays = (tpl.uiWeekdays || ['1']).map(Number);
-                        let found = false;
-                        for (let d = 0; d < 7; d++) {
-                            const check = new Date(now);
-                            check.setDate(check.getDate() + d);
-                            const jsDay = check.getDay();
-                            const cnDay = jsDay === 0 ? 7 : jsDay;
-                            if (weekdays.includes(cnDay)) {
-                                check.setHours(hours, minutes, 0, 0);
-                                if (check > now || d > 0) { next.setTime(check.getTime()); found = true; break; }
+                        const slots = tpl.weeklySlots || [{ days: ['1'], time: '09:00' }];
+                        let best: Date | null = null;
+                        for (const slot of slots) {
+                            const [h, m] = (slot.time || '09:00').split(':').map(Number);
+                            for (const d of (slot.days || [])) {
+                                const cnDay = Number(d);
+                                const jsTarget = cnDay === 7 ? 0 : cnDay;
+                                let diff = jsTarget - now.getDay();
+                                if (diff <= 0) diff += 7;
+                                const candidate = new Date();
+                                candidate.setDate(candidate.getDate() + diff);
+                                candidate.setHours(h, m, 0, 0);
+                                if (candidate > now && (!best || candidate < best)) best = candidate;
                             }
                         }
-                        if (!found) next.setDate(next.getDate() + 7);
+                        if (best) next.setTime(best.getTime());
                     } else if (tpl.recurrence === 'monthly') {
                         const targetDate = parseInt(tpl.uiDayOfMonth || '1');
                         next.setDate(targetDate);
@@ -260,7 +262,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                             intervalValue: tpl.intervalValue,
                             intervalUnit: tpl.intervalUnit,
                             uiTime: tpl.uiTime,
-                            uiWeekdays: tpl.uiWeekdays,
+                            weeklySlots: tpl.weeklySlots,
                             uiDayOfMonth: tpl.uiDayOfMonth,
                             templateId: tpl.id,
                         });
@@ -290,7 +292,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
             ...task,
             content: task.content.length > 0 ? task.content : [''],
             uiTime: `${hours}:${minutes}`,
-            uiWeekdays: task.uiWeekdays || (task.recurrence === 'weekly' ? [(date.getDay() === 0 ? '7' : date.getDay().toString())] : ['1']),
+            weeklySlots: task.weeklySlots || [{ days: ['1'], time: '09:00' }],
             uiDayOfMonth: date.getDate().toString(),
             intervalValue: task.intervalValue || 30,
             intervalUnit: task.intervalUnit || 'minute'
@@ -504,7 +506,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                         intervalValue: tpl.intervalValue ?? prev.intervalValue,
                                         intervalUnit: tpl.intervalUnit ?? prev.intervalUnit,
                                         uiTime: tpl.uiTime ?? prev.uiTime,
-                                        uiWeekdays: tpl.uiWeekdays ?? prev.uiWeekdays,
+                                        weeklySlots: tpl.weeklySlots ?? prev.weeklySlots,
                                         uiDayOfMonth: tpl.uiDayOfMonth ?? prev.uiDayOfMonth
                                     }));
                                     // 关联对象也自动带过来
@@ -728,41 +730,81 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
                    {newTask.recurrence === 'weekly' && (
                        <div>
-                           <label className="block text-sm font-medium text-gray-700 mb-1">{t.dayOfWeek}</label>
-                           <div className="flex flex-wrap gap-2 mb-2">
-                               {['1','2','3','4','5','6','7'].map(d => (
-                                   <label key={d} className="flex items-center gap-1 text-sm cursor-pointer">
-                                       <input
-                                           type="checkbox"
-                                           checked={(newTask.uiWeekdays || ['1']).includes(d)}
-                                           onChange={e => {
-                                               const days = newTask.uiWeekdays || ['1'];
-                                               setNewTask({...newTask, uiWeekdays: e.target.checked
-                                                   ? [...days, d].sort()
-                                                   : days.filter(x => x !== d)
-                                               });
-                                           }}
-                                           className="rounded text-green-600"
-                                       />
-                                       {['一','二','三','四','五','六','日'][Number(d)-1]}
-                                   </label>
-                               ))}
+                           <label className="block text-sm font-medium text-gray-700 mb-2">{t.dayOfWeek}</label>
+                           <div className="space-y-2">
+                               {(newTask.weeklySlots || [{ days: ['1'], time: '09:00' }]).map((slot, rowIdx) => {
+                                   const usedDays = new Set<string>();
+                                   (newTask.weeklySlots || []).forEach((s, i) => {
+                                       if (i !== rowIdx) (s.days || []).forEach(d => usedDays.add(d));
+                                   });
+                                   const names = ['一','二','三','四','五','六','日'];
+                                   const prefs = [
+                                       ['1','2','3','4','5'],
+                                       ['6','7'],
+                                       ['1','2','3','4','5','6','7']
+                                   ];
+                                   return (
+                                       <div key={rowIdx} className="flex items-center gap-2 flex-wrap p-2 bg-gray-50 rounded">
+                                           {names.map((name, idx) => {
+                                               const d = String(idx + 1);
+                                               const disabled = usedDays.has(d);
+                                               const checked = (slot.days || []).includes(d);
+                                               return (
+                                                   <label key={d} className={`flex items-center gap-0.5 text-xs ${disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}>
+                                                       <input type="checkbox" checked={checked} disabled={disabled}
+                                                           onChange={e => {
+                                                               const slots = [...(newTask.weeklySlots || [{ days: ['1'], time: '09:00' }])];
+                                                               const s = { ...slots[rowIdx] };
+                                                               s.days = e.target.checked
+                                                                   ? [...(s.days || []), d].sort()
+                                                                   : (s.days || []).filter(x => x !== d);
+                                                               slots[rowIdx] = s;
+                                                               setNewTask({...newTask, weeklySlots: slots});
+                                                           }}
+                                                           className="rounded text-green-600"
+                                                       />{name}
+                                                   </label>
+                                               );
+                                           })}
+                                           <button type="button" onClick={() => {
+                                               const slots = [...(newTask.weeklySlots || [{ days: ['1'], time: '09:00' }])];
+                                               slots[rowIdx] = { ...slots[rowIdx], days: prefs[0] };
+                                               setNewTask({...newTask, weeklySlots: slots});
+                                           }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">工作日</button>
+                                           <button type="button" onClick={() => {
+                                               const slots = [...(newTask.weeklySlots || [{ days: ['1'], time: '09:00' }])];
+                                               slots[rowIdx] = { ...slots[rowIdx], days: prefs[1] };
+                                               setNewTask({...newTask, weeklySlots: slots});
+                                           }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">周末</button>
+                                           <button type="button" onClick={() => {
+                                               const slots = [...(newTask.weeklySlots || [{ days: ['1'], time: '09:00' }])];
+                                               slots[rowIdx] = { ...slots[rowIdx], days: prefs[2] };
+                                               setNewTask({...newTask, weeklySlots: slots});
+                                           }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">全选</button>
+                                           <input type="time" value={slot.time || '09:00'}
+                                               onChange={e => {
+                                                   const slots = [...(newTask.weeklySlots || [{ days: ['1'], time: '09:00' }])];
+                                                   slots[rowIdx] = { ...slots[rowIdx], time: e.target.value };
+                                                   setNewTask({...newTask, weeklySlots: slots});
+                                               }}
+                                               className="p-1 border rounded text-sm w-24"
+                                           />
+                                           {(newTask.weeklySlots || []).length > 1 && (
+                                               <button type="button" onClick={() => {
+                                                   setNewTask({...newTask, weeklySlots: (newTask.weeklySlots || []).filter((_, i) => i !== rowIdx)});
+                                               }} className="text-red-400 hover:text-red-600 text-xs ml-1">✕</button>
+                                           )}
+                                       </div>
+                                   );
+                               })}
                            </div>
-                           <div className="flex gap-2 items-center">
-                               <button type="button" onClick={() => setNewTask({...newTask, uiWeekdays: ['1','2','3','4','5']})} className="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">工作日</button>
-                               <button type="button" onClick={() => setNewTask({...newTask, uiWeekdays: ['6','7']})} className="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">周末</button>
-                               <button type="button" onClick={() => setNewTask({...newTask, uiWeekdays: ['1','2','3','4','5','6','7']})} className="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">全选</button>
-                               <label className="text-sm">
-                                   <span className="text-gray-500 mr-1">{t.time}</span>
-                                   <input
-                                     type="time"
-                                     value={newTask.uiTime}
-                                     onChange={e => setNewTask({...newTask, uiTime: e.target.value})}
-                                     className="p-1.5 border border-gray-300 rounded"
-                                     required
-                                   />
-                               </label>
-                           </div>
+                           {(newTask.weeklySlots || []).length < 7 && (
+                               <button type="button" onClick={() => {
+                                   const usedAll = new Set((newTask.weeklySlots || []).flatMap(s => s.days));
+                                   const firstFree = ['1','2','3','4','5','6','7'].find(d => !usedAll.has(d)) || '1';
+                                   setNewTask({...newTask, weeklySlots: [...(newTask.weeklySlots || []), { days: [firstFree], time: '09:00' }]});
+                               }} className="text-xs text-blue-600 hover:text-blue-800 mt-1">+ 添加时段</button>
+                           )}
                        </div>
                    )}
 

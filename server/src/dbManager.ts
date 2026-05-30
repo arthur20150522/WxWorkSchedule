@@ -41,16 +41,18 @@ export async function initDB(): Promise<Low<Data>> {
         console.log(`[DB] Recovering stuck task ${t.id} → pending`);
         t.status = 'pending';
       }
-      // Migration: uiWeekday → uiWeekdays
-      if (t.uiWeekday && !t.uiWeekdays) {
-        t.uiWeekdays = [t.uiWeekday];
+      // Migration: uiWeekday/uiWeekdays → weeklySlots
+      if ((t.uiWeekdays || t.uiWeekday) && !t.weeklySlots) {
+        const days = t.uiWeekdays || (t.uiWeekday ? [t.uiWeekday] : ['1']);
+        t.weeklySlots = [{ days, time: t.uiTime || '09:00' }];
       }
     });
 
     data.templates.forEach((t: any) => {
       if (typeof t.content === 'string') t.content = [t.content];
-      if (t.uiWeekday && !t.uiWeekdays) {
-        t.uiWeekdays = [t.uiWeekday];
+      if ((t.uiWeekdays || t.uiWeekday) && !t.weeklySlots) {
+        const days = t.uiWeekdays || (t.uiWeekday ? [t.uiWeekday] : ['1']);
+        t.weeklySlots = [{ days, time: t.uiTime || '09:00' }];
       }
     });
 

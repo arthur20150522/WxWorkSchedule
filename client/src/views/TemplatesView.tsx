@@ -19,7 +19,7 @@ const getDefaultTemplate = (): Partial<Template> => ({
     targets: [],
     recurrence: 'once',
     uiTime: '09:00',
-    uiWeekdays: ['1'],
+    weeklySlots: [{ days: ['1'], time: '09:00' }],
     uiDayOfMonth: '1',
     intervalValue: 30,
     intervalUnit: 'minute'
@@ -278,42 +278,76 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
 
                         {newTemplate.recurrence === 'weekly' && (
                            <div>
-                               <label className="block text-sm font-medium text-gray-700 mb-1">{t.dayOfWeek}</label>
-                               <div className="flex flex-wrap gap-2 mb-2">
-                                   {['1','2','3','4','5','6','7'].map(d => {
-                                       const days = newTemplate.uiWeekdays || ['1'];
+                               <label className="block text-sm font-medium text-gray-700 mb-2">{t.dayOfWeek}</label>
+                               <div className="space-y-2">
+                                   {(newTemplate.weeklySlots || [{ days: ['1'], time: '09:00' }]).map((slot: any, rowIdx: number) => {
+                                       const usedDays = new Set<string>();
+                                       (newTemplate.weeklySlots || []).forEach((s: any, i: number) => {
+                                           if (i !== rowIdx) (s.days || []).forEach((d: string) => usedDays.add(d));
+                                       });
+                                       const names = ['一','二','三','四','五','六','日'];
                                        return (
-                                           <label key={d} className="flex items-center gap-1 text-sm cursor-pointer">
-                                               <input
-                                                   type="checkbox"
-                                                   checked={days.includes(d)}
+                                           <div key={rowIdx} className="flex items-center gap-2 flex-wrap p-2 bg-gray-50 rounded">
+                                               {names.map((name, idx) => {
+                                                   const d = String(idx + 1);
+                                                   const disabled = usedDays.has(d);
+                                                   const checked = (slot.days || []).includes(d);
+                                                   return (
+                                                       <label key={d} className={`flex items-center gap-0.5 text-xs ${disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}>
+                                                           <input type="checkbox" checked={checked} disabled={disabled}
+                                                               onChange={e => {
+                                                                   const slots = [...(newTemplate.weeklySlots || [{ days: ['1'], time: '09:00' }])];
+                                                                   const s = { ...slots[rowIdx] };
+                                                                   s.days = e.target.checked
+                                                                       ? [...(s.days || []), d].sort()
+                                                                       : (s.days || []).filter((x: string) => x !== d);
+                                                                   slots[rowIdx] = s;
+                                                                   setNewTemplate({...newTemplate, weeklySlots: slots});
+                                                               }}
+                                                               className="rounded text-green-600"
+                                                           />{name}
+                                                       </label>
+                                                   );
+                                               })}
+                                               <button type="button" onClick={() => {
+                                                   const slots = [...(newTemplate.weeklySlots || [{ days: ['1'], time: '09:00' }])];
+                                                   slots[rowIdx] = { ...slots[rowIdx], days: ['1','2','3','4','5'] };
+                                                   setNewTemplate({...newTemplate, weeklySlots: slots});
+                                               }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">工作日</button>
+                                               <button type="button" onClick={() => {
+                                                   const slots = [...(newTemplate.weeklySlots || [{ days: ['1'], time: '09:00' }])];
+                                                   slots[rowIdx] = { ...slots[rowIdx], days: ['6','7'] };
+                                                   setNewTemplate({...newTemplate, weeklySlots: slots});
+                                               }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">周末</button>
+                                               <button type="button" onClick={() => {
+                                                   const slots = [...(newTemplate.weeklySlots || [{ days: ['1'], time: '09:00' }])];
+                                                   slots[rowIdx] = { ...slots[rowIdx], days: ['1','2','3','4','5','6','7'] };
+                                                   setNewTemplate({...newTemplate, weeklySlots: slots});
+                                               }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">全选</button>
+                                               <input type="time" value={slot.time || '09:00'}
                                                    onChange={e => {
-                                                       setNewTemplate({...newTemplate, uiWeekdays: e.target.checked
-                                                           ? [...days, d].sort()
-                                                           : days.filter(x => x !== d)
-                                                       });
+                                                       const slots = [...(newTemplate.weeklySlots || [{ days: ['1'], time: '09:00' }])];
+                                                       slots[rowIdx] = { ...slots[rowIdx], time: e.target.value };
+                                                       setNewTemplate({...newTemplate, weeklySlots: slots});
                                                    }}
-                                                   className="rounded text-green-600"
+                                                   className="p-1 border rounded text-sm w-24"
                                                />
-                                               {['一','二','三','四','五','六','日'][Number(d)-1]}
-                                           </label>
+                                               {(newTemplate.weeklySlots || []).length > 1 && (
+                                                   <button type="button" onClick={() => {
+                                                       setNewTemplate({...newTemplate, weeklySlots: (newTemplate.weeklySlots || []).filter((_: any, i: number) => i !== rowIdx)});
+                                                   }} className="text-red-400 hover:text-red-600 text-xs ml-1">✕</button>
+                                               )}
+                                           </div>
                                        );
                                    })}
                                </div>
-                               <div className="flex gap-2 items-center">
-                                   <button type="button" onClick={() => setNewTemplate({...newTemplate, uiWeekdays: ['1','2','3','4','5']})} className="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">工作日</button>
-                                   <button type="button" onClick={() => setNewTemplate({...newTemplate, uiWeekdays: ['6','7']})} className="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">周末</button>
-                                   <label className="text-sm">
-                                       <span className="text-gray-500 mr-1">{t.time}</span>
-                                       <input
-                                         type="time"
-                                        value={newTemplate.uiTime ?? '09:00'}
-                                         onChange={e => setNewTemplate({...newTemplate, uiTime: e.target.value})}
-                                         className="p-1.5 border border-gray-300 rounded"
-                                         required
-                                       />
-                                   </label>
-                               </div>
+                               {(newTemplate.weeklySlots || []).length < 7 && (
+                                   <button type="button" onClick={() => {
+                                       const usedAll = new Set((newTemplate.weeklySlots || []).flatMap((s: any) => s.days));
+                                       const firstFree = ['1','2','3','4','5','6','7'].find(d => !usedAll.has(d)) || '1';
+                                       setNewTemplate({...newTemplate, weeklySlots: [...(newTemplate.weeklySlots || []), { days: [firstFree], time: '09:00' }]});
+                                   }} className="text-xs text-blue-600 hover:text-blue-800 mt-1">+ 添加时段</button>
+                               )}
                            </div>
                         )}
 
