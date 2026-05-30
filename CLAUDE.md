@@ -1,78 +1,100 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## 操作日志规则
 
-## Project Overview
+**每次代码修改后，必须追记到 `PROJECT_STATUS.md`**。格式：
 
-WxSchedule is a WeChat Robot Scheduled Task Management System — a full-stack app combining a wx4py-based WeChat bot (Windows UI Automation) with a React web dashboard. It supports multi-user WeChat automation with scheduled/recurring messaging to groups and contacts.
+```
+### HH:MM — 简短标题
+- **HH:MM** 做了什么 — 文件路径/原因/结果
+```
 
-## Development Commands
+规则：
+1. 找到文件末尾 `## 待办` 之前的最新日期段落
+2. 如果是同一天，追加到当天的操作日志下
+3. 如果是新的一天，新建 `## YYYY-MM-DD 操作日志` 段落
+4. 待办有变化时同步更新待办表
+5. 不要创建新的日期命名文件，始终写 `PROJECT_STATUS.md`
 
-**Backend (`server/` directory):**
+---
+
+## 关键禁止项
+
+- **禁止执行完整 Build/打包**。仅做 `tsc --noEmit` 类型检查。
+- **禁止执行 `npm run build`**。
+- **不要修改 `server/pybridge/bridge.py`**（wx4py 桥接层）。
+- **不要恢复多用户架构**。当前是单文件 DB + 全局单队列。
+- **不要重新引入 Wechaty 兼容层**（Room.say / Contact.say 等）。
+- **不要硬编码用户名**。.user 支持任意 username:password。
+
+---
+
+## 项目概览
+
+WxSchedule — 微信定时消息机器人。wx4py (Windows UI Automation) + React 管理后台。
+
+## 启动
+
+```
+双击 start.bat → 选 2 (全部启动) → http://localhost:5173
+```
+
+## 编译检查（仅类型检查，不构建）
+
 ```bash
-npm run dev      # TypeScript watch mode (tsx)
-npm run build    # Compile TypeScript to dist/
-npm run start    # Run compiled production build
+cd server && npx tsc --noEmit   # 后端
+cd client && npx tsc --noEmit   # 前端
 ```
 
-**Frontend (`client/` directory):**
-```bash
-npm run dev      # Vite dev server on http://localhost:5173
-npm run build    # Type check + Vite production build
-npm run preview  # Preview production build
-```
+## 架构（已重构，非多用户）
 
-**Local development setup (two terminals):**
-```bash
-# Terminal 1
-cd server && npm run dev   # API on http://localhost:3000
+### 数据
+- **单文件 DB**: `server/db.json` (contacts + tasks + templates + logs)
+- **旧数据迁移**: dbManager.migrateFromLegacy() 自动从 `server/users/<user>/db.json` 合并
 
-# Terminal 2
-cd client && npm run dev   # UI on http://localhost:5173 (proxies /api to :3000)
-```
+### 调度与发送
+1. **Scheduler** — 每 10s 扫描 pending + scheduleTime<=now → 入队。逾期超过 MAX_TASK_DELAY_MINUTES(默认30min) 自动 skipped。
+2. **TaskQueue** — 全局单例。严格串行，每任务随机 5~10s 间隔，失败重试 1 次(2s 后)。
+3. **发送**: task.targetName → wxBridge.send(targetName, content, targetType)
+4. **周期**: calculateNextTime() — daily/weekly/monthly/interval
 
-There are no automated tests. Manual testing requires a real or mock WeChat session.
+### 认证
+- `.user` 文件: `{ "username": "password_or_hash" }`，任意用户名
+- 明文密码首次登录自动迁移为 bcrypt
+- JWT 7 天，verifyPassword(username, password)
 
-## Architecture
+### 前端结构
+- `App.tsx` — 主状态 + API 轮询 + 标签路由
+- `views/` — Dashboard / Contacts / Templates / Tasks / Logs
+- `utils/i18n.ts` — 中文 UI 文案
+- Vite proxy `/api/*` → `http://localhost:3000`
 
-### Multi-Tenant Model
-Each user gets a separate lowdb JSON database at `server/users/<username>/db.json`. The bot runs as a single wx4py instance (Windows UIA) — WeChat must be pre-logged-in on the Windows desktop. All users share the same bot for message delivery.
+### 通讯录
+- 手动管理 + wxBridge.search 扫描辅助
+- `/api/contacts` CRUD + `/api/contacts/scan?q=` 搜索
 
-### Task Execution Pipeline
-1. **Scheduler** (`scheduler.ts`) — polls every 10 seconds; queries all users' DBs for tasks where `scheduleTime <= now` and status is `pending`
-2. **TaskQueue** (`taskQueue.ts`) — singleton per user; deduplicates tasks; executes sequentially with 500ms delays; sends messages via Wechaty
-3. **Recurrence** — after execution, calculates next run time using date-fns and resets task to `pending`
-4. **wx4py Bridge** (`wxBridge.ts` + `pybridge/bridge.py`) — Node.js HTTP client talks to a Python HTTP server on `127.0.0.1:39800` that wraps wx4py for WeChat Windows UI Automation
+### 导入导出
+- `GET /api/data/export` — 全量 JSON (contacts+templates+tasks)
+- `POST /api/data/import` — 合并模式，同 id 跳过
 
-### Authentication
-JWT tokens (7-day expiry) issued on POST `/api/login`, verified by `authMiddleware.ts` on all protected routes. Passwords stored as bcrypt hashes in `server/.user` (JSON file); plain-text passwords are migrated on first login.
+## API 速查
 
-### Data Model
-Tasks support cyclic content: `content: string[]` with `currentContentIndex` tracking which message to send next, rotating on each execution. Recurrence types: `once | daily | weekly | monthly | interval` (interval uses `intervalValue` + `intervalUnit`).
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/login` | { username, password } → { token } |
+| GET | `/api/status` | Bot 状态 + 队列 + taskStats |
+| POST | `/api/bot/restart` | 重启 bridge |
+| GET/POST/PUT/DELETE | `/api/contacts` | 通讯录 CRUD |
+| GET | `/api/contacts/scan?q=` | 扫描微信通讯录 |
+| GET/POST/PUT/DELETE | `/api/templates` | 模板 CRUD |
+| GET/POST/PUT/DELETE | `/api/tasks` | 任务 CRUD |
+| DELETE | `/api/tasks/batch-delete` | 批量删除 |
+| GET | `/api/logs` | 最近 100 条日志 |
+| GET | `/api/data/export` | 全量导出 |
+| POST | `/api/data/import` | 全量导入 |
 
-Database schema (lowdb JSON): `{ tasks: Task[], templates: Template[], logs: Log[] }`. `dbManager.ts` handles migrations (e.g., converting legacy string content to string arrays).
+## 配置文件
 
-### Frontend Structure
-- `App.tsx` — main state, API polling, tab-based routing
-- `views/` — one view per tab (Dashboard, Groups, Tasks, Templates, Logs)
-- `utils/i18n.ts` — UI strings (Chinese primary)
-- Vite proxies `/api/*` → `http://localhost:3000` in dev
-
-## Configuration
-
-**`server/.env`** (required):
-```
-PORT=3000
-JWT_SECRET=<your-secret>
-```
-
-**`server/.user`** (auto-created, JSON):
-```json
-{ "admin": "bcrypt_hash_or_plaintext" }
-```
-
-Both files are `.gitignored`. The `server/users/` directory (user data) is also `.gitignored`.
-
-## Deployment
-
-Use `deploy.ps1` (Windows) or `deploy.sh` (Unix) to build, SCP to remote server, and restart via PM2. Nginx examples are in `nginx.conf.example` and `wxwork_nginx.conf` — static files served directly, `/api/*` proxied to Express.
+- `server/.env` — PORT + JWT_SECRET + MAX_TASK_DELAY_MINUTES
+- `server/.user` — 用户密码文件 (gitignored)
+- `server/db.json` — 主数据库 (gitignored)

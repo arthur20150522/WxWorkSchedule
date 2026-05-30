@@ -2,23 +2,21 @@ import { useState, useEffect } from 'react';
 import { RefreshCw, Trash2, FileText } from 'lucide-react';
 import clsx from 'clsx';
 import { t } from '../utils/i18n';
-import { Task, Group, Template } from '../types';
+import { Task, Contact, Template } from '../types';
 import axios from 'axios';
 
 interface TasksViewProps {
     tasks: Task[];
     templates: Template[];
     fetchTasks: () => Promise<void>;
-    groups: Group[];
-    contacts: {id: string, name: string}[];
+    contacts: Contact[];
     showToast: (msg: string, type: 'success' | 'error' | 'info') => void;
     initialDraft?: Partial<Task>;
 }
 
-export const TasksView: React.FC<TasksViewProps> = ({ 
-    tasks, templates, fetchTasks, groups, contacts, showToast, initialDraft
+export const TasksView: React.FC<TasksViewProps> = ({
+    tasks, templates, fetchTasks, contacts, showToast, initialDraft
 }) => {
-    // Task Form State
     type TaskDraft = Partial<Task> & {
         uiTime: string;
         uiWeekday: string;
@@ -30,17 +28,17 @@ export const TasksView: React.FC<TasksViewProps> = ({
     const initialNewTask: TaskDraft = {
       type: 'text',
       targetType: 'group',
-      targetId: '',
+      targetName: '',
       content: [''],
-      scheduleTime: '', 
+      scheduleTime: '',
       recurrence: 'once',
       uiTime: '09:00',
-      uiWeekday: '1', 
+      uiWeekday: '1',
       uiDayOfMonth: '1',
       intervalValue: 30,
       intervalUnit: 'minute'
     };
-    
+
     const [newTask, setNewTask] = useState<TaskDraft>({
         ...initialNewTask,
         ...(initialDraft || {}),
@@ -49,18 +47,20 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
     useEffect(() => {
         if (initialDraft) {
-            setNewTask(prev => ({ 
-                ...prev, 
+            setNewTask(prev => ({
+                ...prev,
                 ...initialDraft,
                 content: initialDraft.content && initialDraft.content.length > 0 ? initialDraft.content : ['']
             }));
         }
     }, [initialDraft]);
+
     const [isEditing, setIsEditing] = useState(false);
     const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
     const [taskSearchQuery, setTaskSearchQuery] = useState('');
     const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'processing' | 'success' | 'failed'>('all');
-    const [selectedTargets, setSelectedTargets] = useState<{ type: 'group' | 'contact'; id: string; name: string }[]>([]);
+    const [selectedTargets, setSelectedTargets] = useState<{ type: 'group' | 'contact'; name: string }[]>([]);
+    const [manualTarget, setManualTarget] = useState('');
 
     const getIntervalUnitLabel = (unit?: 'minute' | 'hour' | 'day') => {
         if (unit === 'hour') return t.hours;
@@ -81,29 +81,36 @@ export const TasksView: React.FC<TasksViewProps> = ({
     const resetForm = () => {
         setNewTask({ ...initialNewTask });
         setSelectedTargets([]);
+        setManualTarget('');
         setIsEditing(false);
     };
 
     const createTask = async (e: React.FormEvent) => {
         e.preventDefault();
         const contentArray = newTask.content?.filter(line => line.trim() !== '') || [];
-        
-        if (selectedTargets.length === 0 || contentArray.length === 0) {
+
+        // Build target list: selected from contacts + manual input
+        let targets = [...selectedTargets];
+        if (manualTarget.trim()) {
+            targets.push({ type: newTask.targetType || 'group', name: manualTarget.trim() });
+        }
+
+        if (targets.length === 0 || contentArray.length === 0) {
             showToast('请选择目标并输入内容', 'error');
             return;
         }
-    
+
         // Calculate Schedule Time based on Recurrence
         let finalScheduleTime = newTask.scheduleTime;
         const now = new Date();
-        
+
         if (newTask.recurrence === 'interval') {
              if (!finalScheduleTime) finalScheduleTime = now.toISOString();
         } else if (newTask.recurrence !== 'once') {
             const [hours, minutes] = newTask.uiTime.split(':').map(Number);
             let nextRun = new Date();
             nextRun.setHours(hours, minutes, 0, 0);
-    
+
             if (newTask.recurrence === 'daily') {
                 if (nextRun <= now) nextRun.setDate(nextRun.getDate() + 1);
             } else if (newTask.recurrence === 'weekly') {
@@ -120,48 +127,35 @@ export const TasksView: React.FC<TasksViewProps> = ({
             }
             finalScheduleTime = nextRun.toISOString();
         } else {
-            // Recurrence is once
-            if (!finalScheduleTime) {
-                 // If no time specified for 'once', assume immediate (or required field handles it)
-                 // But <input type="datetime-local" required /> should handle it.
-                 // If logic falls here, it might be empty.
-                 return;
-            }
+            if (!finalScheduleTime) return;
         }
-    
+
         try {
             if (isEditing && newTask.id) {
-                // Editing mode - only supports single task editing (the one selected)
-                // We assume in editing mode, selectedTargets has exactly 1 item (the task's target)
-                // If user selected more, it's ambiguous. But let's support updating the current task's target if changed.
-                // Actually, batch update is complex. Let's restrict editing to single target.
-                const target = selectedTargets[0];
+                const target = targets[0];
                 await axios.put(`/api/tasks/${newTask.id}`, {
                     ...newTask,
                     content: contentArray,
                     scheduleTime: finalScheduleTime,
                     targetType: target.type,
-                    targetId: target.id,
                     targetName: target.name
                 });
                 showToast('任务更新成功', 'success');
             } else {
-                // Batch Creation
                 let count = 0;
-                for (const target of selectedTargets) {
+                for (const target of targets) {
                     await axios.post('/api/tasks', {
                         ...newTask,
                         content: contentArray,
                         scheduleTime: finalScheduleTime,
                         targetType: target.type,
-                        targetId: target.id,
                         targetName: target.name
                     });
                     count++;
                 }
                 showToast(`成功创建 ${count} 个任务`, 'success');
             }
-          
+
           await fetchTasks();
           resetForm();
         } catch (e) {
@@ -173,7 +167,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
         const date = new Date(task.scheduleTime);
         const hours = date.getHours().toString().padStart(2, '0');
         const minutes = date.getMinutes().toString().padStart(2, '0');
-        
+
         setNewTask({
             ...task,
             content: task.content.length > 0 ? task.content : [''],
@@ -183,10 +177,9 @@ export const TasksView: React.FC<TasksViewProps> = ({
             intervalValue: task.intervalValue || 30,
             intervalUnit: task.intervalUnit || 'minute'
         });
-        
+
         setSelectedTargets([{
             type: task.targetType,
-            id: task.targetId,
             name: task.targetName
         }]);
 
@@ -216,7 +209,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
     const batchDeleteTasks = async () => {
         if (selectedTaskIds.size === 0) return;
         if (!window.confirm(`确定要删除选中的 ${selectedTaskIds.size} 个任务吗？`)) return;
-        
+
         try {
             await axios.delete('/api/tasks/batch-delete', { data: { ids: Array.from(selectedTaskIds) } });
             setSelectedTaskIds(new Set());
@@ -227,12 +220,11 @@ export const TasksView: React.FC<TasksViewProps> = ({
         }
     };
 
-    // Filtered Tasks
     const filteredTasks = tasks
-      .filter(t => taskFilter === 'all' || t.status === taskFilter)
-      .filter(t => 
-          t.content.some(c => c.toLowerCase().includes(taskSearchQuery.toLowerCase())) || 
-          t.targetName.toLowerCase().includes(taskSearchQuery.toLowerCase())
+      .filter(task => taskFilter === 'all' || task.status === taskFilter)
+      .filter(task =>
+          task.content.some(c => c.toLowerCase().includes(taskSearchQuery.toLowerCase())) ||
+          task.targetName.toLowerCase().includes(taskSearchQuery.toLowerCase())
       );
 
     return (
@@ -251,11 +243,11 @@ export const TasksView: React.FC<TasksViewProps> = ({
                 {!isEditing && (
                     <div className="md:col-span-2">
                          <label className="block text-sm font-medium text-gray-700 mb-1">{t.loadFromTemplate}</label>
-                         <select 
+                         <select
                             onChange={e => {
                                 const tplId = e.target.value;
                                 if (!tplId) return;
-                                const tpl = templates.find(t => t.id === tplId);
+                                const tpl = templates.find(tplItem => tplItem.id === tplId);
                                 if (tpl) {
                                     setNewTask(prev => ({
                                         ...prev,
@@ -267,6 +259,12 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                         uiWeekday: tpl.uiWeekday ?? prev.uiWeekday,
                                         uiDayOfMonth: tpl.uiDayOfMonth ?? prev.uiDayOfMonth
                                     }));
+                                    // 关联对象也自动带过来
+                                    if (tpl.targets && tpl.targets.length > 0) {
+                                        setSelectedTargets(
+                                            tpl.targets.map(t => ({ type: t.type, name: t.name }))
+                                        );
+                                    }
                                 }
                             }}
                             className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
@@ -282,55 +280,65 @@ export const TasksView: React.FC<TasksViewProps> = ({
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.selectTargets}</label>
                   <div className="max-h-48 overflow-y-auto border border-gray-300 rounded p-2 grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {groups.map(g => (
-                        <label key={g.id} className="flex items-center space-x-2 p-1 hover:bg-gray-50 rounded cursor-pointer">
-                            <input 
-                                type="checkbox"
-                                checked={selectedTargets.some(t => t.id === g.id)}
-                                onChange={e => {
-                                    const target = { type: 'group' as const, id: g.id, name: g.topic };
-                                    setSelectedTargets(prev => 
-                                        e.target.checked 
-                                            ? [...prev, target]
-                                            : prev.filter(t => t.id !== g.id)
-                                    );
-                                }}
-                                className="rounded text-green-600 focus:ring-green-500"
-                            />
-                            <span className="text-sm truncate">{g.topic}</span>
-                            <span className="text-xs text-gray-400">({t.group})</span>
-                        </label>
-                    ))}
                     {contacts.map(c => (
                         <label key={c.id} className="flex items-center space-x-2 p-1 hover:bg-gray-50 rounded cursor-pointer">
-                            <input 
+                            <input
                                 type="checkbox"
-                                checked={selectedTargets.some(t => t.id === c.id)}
+                                checked={selectedTargets.some(st => st.name === c.name)}
                                 onChange={e => {
-                                    const target = { type: 'contact' as const, id: c.id, name: c.name };
-                                    setSelectedTargets(prev => 
-                                        e.target.checked 
+                                    const target = { type: c.type, name: c.name };
+                                    setSelectedTargets(prev =>
+                                        e.target.checked
                                             ? [...prev, target]
-                                            : prev.filter(t => t.id !== c.id)
+                                            : prev.filter(st => st.name !== c.name)
                                     );
                                 }}
                                 className="rounded text-green-600 focus:ring-green-500"
                             />
                             <span className="text-sm truncate">{c.name}</span>
-                            <span className="text-xs text-gray-400">({t.contact})</span>
+                            <span className={clsx(
+                                "text-xs px-1.5 py-0.5 rounded-full",
+                                c.type === 'group' ? "bg-blue-50 text-blue-600" : "bg-green-50 text-green-600"
+                            )}>
+                                {c.type === 'group' ? t.group : t.contact}
+                            </span>
                         </label>
                     ))}
+                    {contacts.length === 0 && (
+                        <div className="col-span-full text-center text-gray-400 py-4 text-sm">
+                            通讯录为空，请先在"通讯录"页添加，或手动输入目标名称
+                        </div>
+                    )}
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">已选择 {selectedTargets.length} 个对象</p>
+                  <div className="mt-2 flex gap-2 items-center">
+                      <input
+                          type="text"
+                          value={manualTarget}
+                          onChange={e => setManualTarget(e.target.value)}
+                          className="flex-1 p-2 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-green-500"
+                          placeholder={t.manualInputTarget}
+                      />
+                      <select
+                          value={newTask.targetType}
+                          onChange={e => setNewTask({...newTask, targetType: e.target.value as any})}
+                          className="p-2 border border-gray-300 rounded text-sm"
+                      >
+                          <option value="group">{t.group}</option>
+                          <option value="contact">{t.contact}</option>
+                      </select>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    已选择 {selectedTargets.length} 个对象{manualTarget.trim() ? ` + 手动输入: ${manualTarget.trim()}` : ''}
+                  </p>
                 </div>
-                
+
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.content} (支持多条消息，循环发送)</label>
                   <div className="space-y-2">
                     {newTask.content?.map((item, index) => (
                         <div key={index} className="flex gap-2 items-start">
                             <span className="mt-2 text-xs text-gray-400 w-4">{index + 1}.</span>
-                            <textarea 
+                            <textarea
                                 value={item}
                                 onChange={e => {
                                     const newContent = [...(newTask.content || [])];
@@ -341,7 +349,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                 rows={2}
                                 placeholder="输入消息内容..."
                             />
-                            <button 
+                            <button
                                 type="button"
                                 onClick={() => {
                                     const newContent = newTask.content?.filter((_, i) => i !== index);
@@ -355,7 +363,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                         </div>
                     ))}
                   </div>
-                  <button 
+                  <button
                     type="button"
                     onClick={() => setNewTask({...newTask, content: [...(newTask.content || []), '']})}
                     className="mt-2 text-sm text-green-600 hover:text-green-700 font-medium flex items-center gap-1"
@@ -366,7 +374,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.recurrence}</label>
-                  <select 
+                  <select
                     value={newTask.recurrence}
                     onChange={e => setNewTask({...newTask, recurrence: e.target.value as any})}
                     className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
@@ -383,7 +391,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                    {newTask.recurrence === 'once' && (
                        <>
                            <label className="block text-sm font-medium text-gray-700 mb-1">{t.scheduleTime}</label>
-                           <input 
+                           <input
                              type="datetime-local"
                              value={newTask.scheduleTime}
                              onChange={e => setNewTask({...newTask, scheduleTime: e.target.value})}
@@ -397,7 +405,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                        <div className="space-y-4">
                             <div>
                                <label className="block text-sm font-medium text-gray-700 mb-1">{t.startTime}</label>
-                               <input 
+                               <input
                                  type="datetime-local"
                                  value={newTask.scheduleTime}
                                  onChange={e => setNewTask({...newTask, scheduleTime: e.target.value})}
@@ -408,7 +416,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                            <div className="flex gap-2">
                                <div className="flex-1">
                                    <label className="block text-sm font-medium text-gray-700 mb-1">{t.intervalValue}</label>
-                                   <input 
+                                   <input
                                      type="number"
                                      min="1"
                                      value={newTask.intervalValue}
@@ -419,7 +427,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                </div>
                                <div className="flex-1">
                                    <label className="block text-sm font-medium text-gray-700 mb-1">{t.intervalUnit}</label>
-                                   <select 
+                                   <select
                                      value={newTask.intervalUnit}
                                      onChange={e => setNewTask({...newTask, intervalUnit: e.target.value as any})}
                                      className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
@@ -436,7 +444,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                    {newTask.recurrence === 'daily' && (
                        <>
                            <label className="block text-sm font-medium text-gray-700 mb-1">{t.everyDayAt}</label>
-                           <input 
+                           <input
                              type="time"
                              value={newTask.uiTime}
                              onChange={e => setNewTask({...newTask, uiTime: e.target.value})}
@@ -450,7 +458,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                        <div className="flex gap-2">
                            <div className="flex-1">
                                <label className="block text-sm font-medium text-gray-700 mb-1">{t.dayOfWeek}</label>
-                               <select 
+                               <select
                                  value={newTask.uiWeekday}
                                  onChange={e => setNewTask({...newTask, uiWeekday: e.target.value})}
                                  className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
@@ -466,7 +474,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                            </div>
                            <div className="flex-1">
                                <label className="block text-sm font-medium text-gray-700 mb-1">{t.time}</label>
-                               <input 
+                               <input
                                  type="time"
                                  value={newTask.uiTime}
                                  onChange={e => setNewTask({...newTask, uiTime: e.target.value})}
@@ -481,7 +489,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                        <div className="flex gap-2">
                            <div className="flex-1">
                                <label className="block text-sm font-medium text-gray-700 mb-1">{t.dayOfMonth}</label>
-                               <select 
+                               <select
                                  value={newTask.uiDayOfMonth}
                                  onChange={e => setNewTask({...newTask, uiDayOfMonth: e.target.value})}
                                  className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
@@ -493,7 +501,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                            </div>
                            <div className="flex-1">
                                <label className="block text-sm font-medium text-gray-700 mb-1">{t.time}</label>
-                               <input 
+                               <input
                                  type="time"
                                  value={newTask.uiTime}
                                  onChange={e => setNewTask({...newTask, uiTime: e.target.value})}
@@ -522,7 +530,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                     <h2 className="text-lg font-bold">{t.scheduledTasks}</h2>
                     <div className="flex items-center gap-2 w-full md:w-auto">
                         {selectedTaskIds.size > 0 && (
-                            <button 
+                            <button
                                 onClick={batchDeleteTasks}
                                 className="px-3 py-2 bg-red-100 text-red-600 rounded hover:bg-red-200 text-sm font-medium flex items-center gap-1"
                             >
@@ -530,14 +538,14 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                 {t.batchDelete} ({selectedTaskIds.size})
                             </button>
                         )}
-                        <input 
-                            type="text" 
+                        <input
+                            type="text"
                             placeholder="搜索任务内容/目标..."
                             className="p-2 border border-gray-300 rounded text-sm flex-1 md:w-64"
                             value={taskSearchQuery}
                             onChange={e => setTaskSearchQuery(e.target.value)}
                         />
-                        <select 
+                        <select
                             value={taskFilter}
                             onChange={e => setTaskFilter(e.target.value as any)}
                             className="p-2 border border-gray-300 rounded text-sm"
@@ -553,18 +561,18 @@ export const TasksView: React.FC<TasksViewProps> = ({
                         </button>
                     </div>
                 </div>
-                
+
                 <div className="hidden md:block bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <table className="w-full text-left text-sm">
                         <thead className="bg-gray-50 text-gray-500">
                             <tr>
                                 <th className="p-4 w-10">
-                                    <input 
+                                    <input
                                         type="checkbox"
                                         checked={filteredTasks.length > 0 && selectedTaskIds.size === filteredTasks.length}
                                         onChange={e => {
                                             if (e.target.checked) {
-                                                setSelectedTaskIds(new Set(filteredTasks.map(t => t.id)));
+                                                setSelectedTaskIds(new Set(filteredTasks.map(ft => ft.id)));
                                             } else {
                                                 setSelectedTaskIds(new Set());
                                             }
@@ -584,27 +592,34 @@ export const TasksView: React.FC<TasksViewProps> = ({
                             {filteredTasks.map(task => (
                                 <tr key={task.id} className="hover:bg-gray-50">
                                     <td className="p-4">
-                                        <input 
+                                        <input
                                             type="checkbox"
                                             checked={selectedTaskIds.has(task.id)}
                                             onChange={e => {
                                                 const newSet = new Set(selectedTaskIds);
-                                                if (e.target.checked) {
-                                                    newSet.add(task.id);
-                                                } else {
-                                                    newSet.delete(task.id);
-                                                }
+                                                if (e.target.checked) newSet.add(task.id);
+                                                else newSet.delete(task.id);
                                                 setSelectedTaskIds(newSet);
                                             }}
                                             className="rounded text-green-600 focus:ring-green-500"
                                         />
                                     </td>
-                                    <td className="p-4 font-medium">{task.targetName}</td>
-                                    <td className="p-4 truncate max-w-xs">{task.content}</td>
+                                    <td className="p-4 font-medium">
+    <span className="inline-flex items-center gap-1.5">
+        <span className={clsx(
+            "text-xs px-1.5 py-0.5 rounded font-medium",
+            task.targetType === 'group' ? "bg-blue-100 text-blue-600" : "bg-green-100 text-green-600"
+        )}>
+            {task.targetType === 'group' ? '群' : '人'}
+        </span>
+        {task.targetName}
+    </span>
+</td>
+                                    <td className="p-4 truncate max-w-xs">{task.content.join(', ')}</td>
                                     <td className="p-4">{new Date(task.scheduleTime).toLocaleString()}</td>
                                     <td className="p-4">
                                         <span className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-700">
-                                            {task.recurrence === 'interval' 
+                                            {task.recurrence === 'interval'
                                                 ? `${t.interval}: ${task.intervalValue}${getIntervalUnitLabel(task.intervalUnit)}`
                                                 : getRecurrenceLabel(task.recurrence)}
                                         </span>
@@ -649,12 +664,12 @@ export const TasksView: React.FC<TasksViewProps> = ({
                     {filteredTasks.length > 0 && (
                          <div className="flex justify-end px-2">
                             <label className="flex items-center space-x-2 text-sm text-gray-600">
-                                <input 
+                                <input
                                     type="checkbox"
                                     checked={filteredTasks.length > 0 && selectedTaskIds.size === filteredTasks.length}
                                     onChange={e => {
                                         if (e.target.checked) {
-                                            setSelectedTaskIds(new Set(filteredTasks.map(t => t.id)));
+                                            setSelectedTaskIds(new Set(filteredTasks.map(ft => ft.id)));
                                         } else {
                                             setSelectedTaskIds(new Set());
                                         }
@@ -665,27 +680,32 @@ export const TasksView: React.FC<TasksViewProps> = ({
                             </label>
                         </div>
                     )}
-                    
+
                     {filteredTasks.map(task => (
                         <div key={task.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 space-y-3">
                             <div className="flex justify-between items-start">
                                 <div className="flex items-center gap-3">
-                                    <input 
+                                    <input
                                         type="checkbox"
                                         checked={selectedTaskIds.has(task.id)}
                                         onChange={e => {
                                             const newSet = new Set(selectedTaskIds);
-                                            if (e.target.checked) {
-                                                newSet.add(task.id);
-                                            } else {
-                                                newSet.delete(task.id);
-                                            }
+                                            if (e.target.checked) newSet.add(task.id);
+                                            else newSet.delete(task.id);
                                             setSelectedTaskIds(newSet);
                                         }}
                                         className="rounded text-green-600 focus:ring-green-500"
                                     />
                                     <div>
-                                        <div className="font-bold text-gray-900">{task.targetName}</div>
+                                        <div className="font-bold text-gray-900 flex items-center gap-1.5">
+    {task.targetName}
+    <span className={clsx(
+        "text-xs px-1.5 py-0.5 rounded font-medium",
+        task.targetType === 'group' ? "bg-blue-100 text-blue-600" : "bg-green-100 text-green-600"
+    )}>
+        {task.targetType === 'group' ? '群' : '人'}
+    </span>
+</div>
                                         <div className="text-xs text-gray-500 mt-0.5">
                                             {new Date(task.scheduleTime).toLocaleString()}
                                         </div>
@@ -703,7 +723,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                      task.status === 'processing' ? t.processing : t.failed}
                                 </span>
                             </div>
-                            
+
                             <div className="bg-gray-50 p-3 rounded-lg text-sm text-gray-700 break-words">
                                 {Array.isArray(task.content) ? (
                                     <ul className="list-decimal list-inside space-y-1">
@@ -716,7 +736,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
                             <div className="flex justify-between items-center pt-2 border-t border-gray-100">
                                 <span className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-600">
-                                    {task.recurrence === 'interval' 
+                                    {task.recurrence === 'interval'
                                         ? `${t.interval}: ${task.intervalValue}${getIntervalUnitLabel(task.intervalUnit)}`
                                         : getRecurrenceLabel(task.recurrence)}
                                 </span>
@@ -732,7 +752,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                             {task.error && <p className="text-xs text-red-500">{task.error}</p>}
                         </div>
                     ))}
-                    
+
                     {filteredTasks.length === 0 && (
                         <div className="text-center text-gray-500 py-12 bg-white rounded-xl border border-gray-200">
                             {tasks.length === 0 ? t.noTasks : '没有找到匹配的任务'}

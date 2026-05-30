@@ -1,50 +1,56 @@
-export interface BotStatus {
-    status: 'offline' | 'waiting_for_scan' | 'logged_in';
-    ready?: boolean;
-    user?: { name: string; id: string };
-    loginTime?: string;
-  }
-  
-  export interface Template {
-    id: string;
-    name: string;
-    type: 'text';
-    content: string[];
-    targets?: { id: string; name: string; type: 'group' | 'contact' }[];
-    // Schedule configuration
-    recurrence: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
-    intervalValue?: number;
-    intervalUnit?: 'minute' | 'hour' | 'day';
-    uiTime?: string;
-    uiWeekday?: string;
-    uiDayOfMonth?: string;
-    createdAt: string;
+// ── Bot Status (API 返回) ────────────────────────────────
+export interface TaskStats {
+  total: number;
+  once: number;
+  daily: number;
+  weekly: number;
+  monthly: number;
+  interval: number;
+  pending: number;
+  failed: number;
+  overduePending: number;
 }
 
-export interface ToastMsg {
-    id: string;
-    type: 'success' | 'error' | 'info';
-    message: string;
-  }
-  
-  export interface DebugLog {
-    id: string;
-    type: 'log' | 'error' | 'warn';
-    message: string;
-    timestamp: string;
-  }
-  
-  export interface Group {
-    id: string;
-    topic: string;
-    memberCount: number;
-  }
-  
-  export interface Task {
+export interface BotStatus {
+  online: boolean;
+  queueLength: number;
+  currentTarget?: string;
+  lastError?: string;
+  loginTime?: string;
+  taskStats: TaskStats;
+}
+
+// ── Contact (通讯录) ──────────────────────────────────────
+export interface Contact {
   id: string;
+  name: string;
+  type: 'group' | 'contact';
+  note: string;
+  createdAt: string;
+}
+
+// ── Template (消息模板) ──────────────────────────────────
+export interface Template {
+  id: string;
+  name: string;
+  type: 'text';
+  content: string[];
+  targets?: { name: string; type: 'group' | 'contact' }[];
+  recurrence: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
+  intervalValue?: number;
+  intervalUnit?: 'minute' | 'hour' | 'day';
+  uiTime?: string;
+  uiWeekday?: string;
+  uiDayOfMonth?: string;
+  createdAt: string;
+}
+
+// ── Task (定时任务) ──────────────────────────────────────
+export interface Task {
+  id: string;
+  templateId?: string;
   type: 'text';
   targetType: 'group' | 'contact';
-  targetId: string;
   targetName: string;
   content: string[];
   currentContentIndex?: number;
@@ -59,16 +65,19 @@ export interface ToastMsg {
   uiWeekday?: string;
   uiDayOfMonth?: string;
 }
-  
-  export interface Log {
-    id: string;
-    level: 'info' | 'error' | 'warn';
-    message: string;
-    timestamp: string;
-    taskId?: string;
-  }
 
-  export interface Contact {
-      id: string;
-      name: string;
-  }
+// ── Log (系统日志) ───────────────────────────────────────
+export interface Log {
+  id: string;
+  level: 'info' | 'error' | 'warn';
+  message: string;
+  timestamp: string;
+  taskId?: string;
+}
+
+// ── Toast ────────────────────────────────────────────────
+export interface ToastMsg {
+  id: string;
+  type: 'success' | 'error' | 'info';
+  message: string;
+}

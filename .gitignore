@@ -35,4 +35,14 @@ server/users/
 server/.env
 .user
 users/
+
+# Build artifacts
+server/dist/
+client/dist/
+
+# Temp / debug files
+env_check.txt
+deploy_log.txt
+ssh_test.txt
+bridge_check.txt
 .trae

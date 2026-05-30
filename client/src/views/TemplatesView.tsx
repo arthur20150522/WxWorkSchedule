@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { RefreshCw, FileText, Trash2 } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { RefreshCw, FileText, Trash2, Upload, Download } from 'lucide-react';
 import { t } from '../utils/i18n';
-import { Template } from '../types';
+import { Template, Contact } from '../types';
 import axios from 'axios';
 
 interface TemplatesViewProps {
@@ -9,6 +9,7 @@ interface TemplatesViewProps {
     fetchTemplates: () => void;
     showToast: (msg: string, type: 'success' | 'error' | 'info') => void;
     onGenerateTask: (template: Template) => void;
+    contacts: Contact[];
 }
 
 const getDefaultTemplate = (): Partial<Template> => ({
@@ -24,11 +25,52 @@ const getDefaultTemplate = (): Partial<Template> => ({
     intervalUnit: 'minute'
 });
 
-export const TemplatesView: React.FC<TemplatesViewProps> = ({ 
-    templates, fetchTemplates, showToast, onGenerateTask 
+export const TemplatesView: React.FC<TemplatesViewProps> = ({
+    templates, fetchTemplates, showToast, onGenerateTask, contacts
 }) => {
     const [isTemplateEditing, setIsTemplateEditing] = useState(false);
     const [newTemplate, setNewTemplate] = useState<Partial<Template>>(getDefaultTemplate());
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // 全量导出 — 一个 JSON 包含 contacts + templates + tasks
+    const handleExport = async () => {
+        try {
+            const res = await axios.get('/api/data/export');
+            const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `wxschedule-backup-${new Date().toISOString().slice(0,10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            const ct = res.data.contacts?.length || 0;
+            const tp = res.data.templates?.length || 0;
+            const tk = res.data.tasks?.length || 0;
+            showToast(`Exported: ${ct} contacts + ${tp} templates + ${tk} tasks`, 'success');
+        } catch {
+            showToast('Export failed', 'error');
+        }
+    };
+
+    // 全量导入 — 服务端合并（同 id 跳过，新数据追加）
+    const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+            const res = await axios.post('/api/data/import', data);
+            const r = res.data;
+            showToast(`Imported: ${r.total || 0} total (${r.contacts || 0}C + ${r.templates || 0}T + ${r.tasks || 0}K)`, 'success');
+            fetchTemplates();
+            window.location.reload();
+        } catch (e: any) {
+            showToast('Import failed: ' + (e.response?.data?.error || e.message), 'error');
+        }
+
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
 
     const getIntervalUnitLabel = (unit?: 'minute' | 'hour' | 'day') => {
         if (unit === 'hour') return t.hours;
@@ -100,8 +142,8 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                     <form onSubmit={createTemplate} className="space-y-4">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">{t.templateName}</label>
-                            <input 
-                                type="text" 
+                            <input
+                                type="text"
                                 value={newTemplate.name ?? ''}
                                 onChange={e => setNewTemplate({...newTemplate, name: e.target.value})}
                                 className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
@@ -115,7 +157,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                 {newTemplate.content?.map((item, index) => (
                                     <div key={index} className="flex gap-2 items-start">
                                         <span className="mt-2 text-xs text-gray-400 w-4">{index + 1}.</span>
-                                        <textarea 
+                                        <textarea
                                             value={item}
                                             onChange={e => {
                                                 const newContent = [...(newTemplate.content || [])];
@@ -126,7 +168,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                             rows={2}
                                             placeholder="输入模板内容..."
                                         />
-                                        <button 
+                                        <button
                                             type="button"
                                             onClick={() => {
                                                 const newContent = newTemplate.content?.filter((_, i) => i !== index);
@@ -140,7 +182,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                     </div>
                                 ))}
                             </div>
-                            <button 
+                            <button
                                 type="button"
                                 onClick={() => setNewTemplate({...newTemplate, content: [...(newTemplate.content || []), '']})}
                                 className="mt-2 text-sm text-green-600 hover:text-green-700 font-medium flex items-center gap-1"
@@ -148,9 +190,39 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                 + 添加下一条内容
                             </button>
                         </div>
+
+                        {/* 关联对象 — 从通讯录选择 */}
+                        {contacts.length > 0 && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">{t.associatedTargets}</label>
+                                <div className="max-h-32 overflow-y-auto border border-gray-300 rounded p-2 grid grid-cols-2 gap-2">
+                                    {contacts.map(c => (
+                                        <label key={c.id} className="flex items-center space-x-2 p-1 hover:bg-gray-50 rounded cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={(newTemplate.targets || []).some(tgt => tgt.name === c.name)}
+                                                onChange={e => {
+                                                    const target = { name: c.name, type: c.type };
+                                                    const currentTargets = newTemplate.targets || [];
+                                                    setNewTemplate({
+                                                        ...newTemplate,
+                                                        targets: e.target.checked
+                                                            ? [...currentTargets, target]
+                                                            : currentTargets.filter(tgt => tgt.name !== c.name)
+                                                    });
+                                                }}
+                                                className="rounded text-green-600 focus:ring-green-500"
+                                            />
+                                            <span className="text-sm truncate">{c.name}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">{t.recurrence}</label>
-                            <select 
+                            <select
                                 value={newTemplate.recurrence ?? 'once'}
                                 onChange={e => setNewTemplate({...newTemplate, recurrence: e.target.value as any})}
                                 className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
@@ -167,7 +239,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                            <div className="flex gap-2">
                                <div className="flex-1">
                                    <label className="block text-sm font-medium text-gray-700 mb-1">{t.intervalValue}</label>
-                                   <input 
+                                   <input
                                      type="number"
                                      min="1"
                                     value={newTemplate.intervalValue ?? 1}
@@ -178,7 +250,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                </div>
                                <div className="flex-1">
                                    <label className="block text-sm font-medium text-gray-700 mb-1">{t.intervalUnit}</label>
-                                   <select 
+                                   <select
                                     value={newTemplate.intervalUnit ?? 'minute'}
                                      onChange={e => setNewTemplate({...newTemplate, intervalUnit: e.target.value as any})}
                                      className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
@@ -194,7 +266,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                         {newTemplate.recurrence === 'daily' && (
                            <div>
                                <label className="block text-sm font-medium text-gray-700 mb-1">{t.everyDayAt}</label>
-                               <input 
+                               <input
                                  type="time"
                                 value={newTemplate.uiTime ?? '09:00'}
                                  onChange={e => setNewTemplate({...newTemplate, uiTime: e.target.value})}
@@ -208,7 +280,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                            <div className="flex gap-2">
                                <div className="flex-1">
                                    <label className="block text-sm font-medium text-gray-700 mb-1">{t.dayOfWeek}</label>
-                                   <select 
+                                   <select
                                     value={newTemplate.uiWeekday ?? '1'}
                                      onChange={e => setNewTemplate({...newTemplate, uiWeekday: e.target.value})}
                                      className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
@@ -224,7 +296,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                </div>
                                <div className="flex-1">
                                    <label className="block text-sm font-medium text-gray-700 mb-1">{t.time}</label>
-                                   <input 
+                                   <input
                                      type="time"
                                     value={newTemplate.uiTime ?? '09:00'}
                                      onChange={e => setNewTemplate({...newTemplate, uiTime: e.target.value})}
@@ -239,7 +311,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                            <div className="flex gap-2">
                                <div className="flex-1">
                                    <label className="block text-sm font-medium text-gray-700 mb-1">{t.dayOfMonth}</label>
-                                   <select 
+                                   <select
                                     value={newTemplate.uiDayOfMonth ?? '1'}
                                      onChange={e => setNewTemplate({...newTemplate, uiDayOfMonth: e.target.value})}
                                      className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
@@ -251,7 +323,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                </div>
                                <div className="flex-1">
                                    <label className="block text-sm font-medium text-gray-700 mb-1">{t.time}</label>
-                                   <input 
+                                   <input
                                      type="time"
                                     value={newTemplate.uiTime ?? '09:00'}
                                      onChange={e => setNewTemplate({...newTemplate, uiTime: e.target.value})}
@@ -271,9 +343,18 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                 <div className="space-y-4">
                     <div className="flex justify-between items-center">
                         <h2 className="text-lg font-bold">{t.templateList}</h2>
-                        <button onClick={fetchTemplates} className="p-2 hover:bg-gray-100 rounded-full" title={t.refresh}>
-                            <RefreshCw className="w-5 h-5 text-gray-600" />
-                        </button>
+                        <div className="flex items-center gap-1">
+                            <button onClick={handleExport} className="p-2 hover:bg-gray-100 rounded-full" title="导出 JSON">
+                                <Download className="w-4 h-4 text-gray-600" />
+                            </button>
+                            <button onClick={() => fileInputRef.current?.click()} className="p-2 hover:bg-gray-100 rounded-full" title="导入 JSON">
+                                <Upload className="w-4 h-4 text-gray-600" />
+                            </button>
+                            <input ref={fileInputRef} type="file" accept=".json" onChange={handleImport} className="hidden" />
+                            <button onClick={fetchTemplates} className="p-2 hover:bg-gray-100 rounded-full" title={t.refresh}>
+                                <RefreshCw className="w-5 h-5 text-gray-600" />
+                            </button>
+                        </div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {templates.map(tpl => (
@@ -301,17 +382,27 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                     </div>
                                 </div>
                                 <p className="text-gray-600 text-sm mb-2 line-clamp-3 whitespace-pre-line">
-                                    {Array.isArray(tpl.content) 
+                                    {Array.isArray(tpl.content)
                                         ? tpl.content.map((c, i) => `${i+1}. ${c}`).join('\n')
                                         : tpl.content}
                                 </p>
-                                <div className="flex items-center gap-2 text-xs text-gray-500">
+                                <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
                                     <span className="bg-gray-100 px-2 py-1 rounded">{tpl.type}</span>
                                     <span className="bg-blue-50 px-2 py-1 rounded text-blue-600">
-                                        {tpl.recurrence === 'interval' 
+                                        {tpl.recurrence === 'interval'
                                             ? `${t.interval}: ${tpl.intervalValue}${getIntervalUnitLabel(tpl.intervalUnit)}`
                                             : getRecurrenceLabel(tpl.recurrence)}
                                     </span>
+                                    {tpl.recurrence !== 'interval' && tpl.uiTime && (
+                                        <span className="bg-cyan-50 px-2 py-1 rounded text-cyan-700">
+                                            {tpl.uiTime}
+                                        </span>
+                                    )}
+                                    {tpl.targets && tpl.targets.length > 0 && (
+                                        <span className="bg-green-50 px-2 py-1 rounded text-green-600">
+                                            {tpl.targets.length} 个目标
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         ))}

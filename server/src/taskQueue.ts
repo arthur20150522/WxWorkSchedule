@@ -1,158 +1,184 @@
-import { Task } from './dbManager.js';
-import { BotManager } from './botManager.js';
-import { DBManager, addLog } from './dbManager.js';
+import { Task, getDb, addLog } from './dbManager.js';
 import { wxBridge } from './wxBridge.js';
 import { addDays, addWeeks, addMonths, addMinutes, addHours } from 'date-fns';
 
-export class TaskQueue {
-    private static instances: Map<string, TaskQueue> = new Map();
-    private queue: Task[] = [];
-    private isProcessing = false;
-    private username: string;
-
-    private constructor(username: string) {
-        this.username = username;
-    }
-
-    public static getInstance(username: string): TaskQueue {
-        if (!this.instances.has(username)) {
-            this.instances.set(username, new TaskQueue(username));
-        }
-        return this.instances.get(username)!;
-    }
-
-    public add(task: Task) {
-        if (!this.queue.find(t => t.id === task.id)) {
-            console.log(`[TaskQueue] Adding task ${task.id} to queue for ${this.username}`);
-            this.queue.push(task);
-            this.process();
-        }
-    }
-
-    private async process() {
-        if (this.isProcessing) return;
-        this.isProcessing = true;
-
-        while (this.queue.length > 0) {
-            const task = this.queue.shift();
-            if (task) {
-                try {
-                    await this.executeTask(task);
-                } catch (e) {
-                    console.error(`[TaskQueue] Error executing task ${task.id}:`, e);
-                }
-                await new Promise(resolve => setTimeout(resolve, 500));
-            }
-        }
-
-        this.isProcessing = false;
-    }
-
-    private async executeTask(task: Task) {
-        const username = this.username;
-        console.log(`[${username}] Executing task ${task.id}`);
-
-        // Mark as processing
-        try {
-            const dbPre = await DBManager.getDb(username);
-            await dbPre.update(({ tasks }) => {
-                const t = tasks.find(x => x.id === task.id);
-                if (t) t.status = 'processing';
-            });
-        } catch (e) {
-            console.error(`[${username}] Failed to mark task ${task.id} as processing:`, e);
-        }
-
-        try {
-            const targetName = task.targetName || task.targetId;
-            const targetType = task.targetType;
-            const currentIndex = task.currentContentIndex || 0;
-            const contentToSend = task.content[currentIndex];
-
-            if (!contentToSend) {
-                console.warn(`[${username}] Task ${task.id} has no content at index ${currentIndex}`);
-            } else {
-                // Prefer cached target with .say() (works for MockBot and cached bridge results)
-                let sent = false;
-                let target: any = null;
-
-                if (targetType === 'group') {
-                    target = BotManager.getCachedRoom(username, task.targetId);
-                } else {
-                    target = BotManager.getCachedContact(username, task.targetId);
-                }
-
-                if (target && typeof target.say === 'function') {
-                    console.log(`[${username}] Using cached target for ${targetName}`);
-                    await target.say(contentToSend);
-                    sent = true;
-                } else {
-                    // Fall back to wxBridge direct send
-                    console.log(`[${username}] Sending via wxBridge to [${targetType}] ${targetName}: ${contentToSend.substring(0, 50)}...`);
-                    const result = await wxBridge.send(targetName, contentToSend, targetType);
-                    if (!result.success) {
-                        throw new Error(result.error || 'wx4py send failed');
-                    }
-                    sent = true;
-                }
-
-                if (!sent) {
-                    throw new Error(`No way to send to ${targetName} — target not cached and bridge unavailable`);
-                }
-            }
-
-            // Update status / reschedule
-            const db = await DBManager.getDb(username);
-            await db.update(({ tasks }) => {
-                const t = tasks.find(x => x.id === task.id);
-                if (t) {
-                    if (t.recurrence && t.recurrence !== 'once') {
-                        const currentSchedule = new Date(t.scheduleTime);
-                        let nextSchedule = currentSchedule;
-
-                        if (t.recurrence === 'daily') nextSchedule = addDays(currentSchedule, 1);
-                        else if (t.recurrence === 'weekly') nextSchedule = addWeeks(currentSchedule, 1);
-                        else if (t.recurrence === 'monthly') nextSchedule = addMonths(currentSchedule, 1);
-                        else if (t.recurrence === 'interval' && t.intervalValue && t.intervalUnit) {
-                            const val = t.intervalValue;
-                            if (t.intervalUnit === 'minute') nextSchedule = addMinutes(currentSchedule, val);
-                            else if (t.intervalUnit === 'hour') nextSchedule = addHours(currentSchedule, val);
-                            else if (t.intervalUnit === 'day') nextSchedule = addDays(currentSchedule, val);
-                        }
-
-                        const now = new Date();
-                        while (nextSchedule <= now) {
-                            if (t.recurrence === 'daily') nextSchedule = addDays(nextSchedule, 1);
-                            else if (t.recurrence === 'weekly') nextSchedule = addWeeks(nextSchedule, 1);
-                            else if (t.recurrence === 'monthly') nextSchedule = addMonths(nextSchedule, 1);
-                            else if (t.recurrence === 'interval' && t.intervalValue && t.intervalUnit) {
-                                const val = t.intervalValue;
-                                if (t.intervalUnit === 'minute') nextSchedule = addMinutes(nextSchedule, val);
-                                else if (t.intervalUnit === 'hour') nextSchedule = addHours(nextSchedule, val);
-                                else if (t.intervalUnit === 'day') nextSchedule = addDays(nextSchedule, val);
-                            }
-                        }
-
-                        t.scheduleTime = nextSchedule.toISOString();
-                        t.status = 'pending';
-                        t.currentContentIndex = (currentIndex + 1) % t.content.length;
-                        console.log(`[${username}] Rescheduled task ${t.id} to ${t.scheduleTime}. Next content index: ${t.currentContentIndex}`);
-                    } else {
-                        t.status = 'success';
-                    }
-                }
-            });
-
-            await addLog(username, 'info', `Task ${task.id} executed successfully. Recurrence: ${task.recurrence || 'once'}`, task.id);
-
-        } catch (error: any) {
-            console.error(`[${username}] Task ${task.id} failed:`, error);
-            const db = await DBManager.getDb(username);
-            await db.update(({ tasks }) => {
-                const t = tasks.find(x => x.id === task.id);
-                if (t) { t.status = 'failed'; t.error = error.message; }
-            });
-            await addLog(username, 'error', `Task ${task.id} failed: ${error.message}`, task.id);
-        }
-    }
+/** Random delay between min and max milliseconds */
+function randomDelay(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
+
+/** Calculate next schedule time for recurring tasks */
+export function calculateNextTime(task: Task): string {
+  const current = new Date(task.scheduleTime);
+  let next = current;
+
+  switch (task.recurrence) {
+    case 'daily':    next = addDays(current, 1); break;
+    case 'weekly':   next = addWeeks(current, 1); break;
+    case 'monthly':  next = addMonths(current, 1); break;
+    case 'interval': {
+      const val = task.intervalValue || 1;
+      switch (task.intervalUnit) {
+        case 'minute': next = addMinutes(current, val); break;
+        case 'hour':   next = addHours(current, val); break;
+        case 'day':    next = addDays(current, val); break;
+      }
+      break;
+    }
+    default: return current.toISOString();
+  }
+
+  // Skip past times for recurring tasks
+  const now = new Date();
+  while (next <= now) {
+    switch (task.recurrence) {
+      case 'daily':    next = addDays(next, 1); break;
+      case 'weekly':   next = addWeeks(next, 1); break;
+      case 'monthly':  next = addMonths(next, 1); break;
+      case 'interval': {
+        const val = task.intervalValue || 1;
+        switch (task.intervalUnit) {
+          case 'minute': next = addMinutes(next, val); break;
+          case 'hour':   next = addHours(next, val); break;
+          case 'day':    next = addDays(next, val); break;
+        }
+        break;
+      }
+      default: return next.toISOString();
+    }
+  }
+
+  return next.toISOString();
+}
+
+class TaskQueue {
+  private queue: Task[] = [];
+  private isProcessing = false;
+  private _currentTarget: string | null = null;
+  private _lastError: string | null = null;
+
+  get length(): number { return this.queue.length; }
+  get currentTarget(): string | null { return this._currentTarget; }
+  get lastError(): string | null { return this._lastError; }
+
+  add(task: Task) {
+    // Deduplicate: skip if already in queue
+    if (this.queue.find(t => t.id === task.id)) return;
+    console.log(`[TaskQueue] Enqueue task ${task.id} → ${task.targetName}`);
+    this.queue.push(task);
+    this.process();
+  }
+
+  private async process() {
+    if (this.isProcessing) return;
+    this.isProcessing = true;
+
+    while (this.queue.length > 0) {
+      const task = this.queue.shift()!;
+      this._currentTarget = task.targetName;
+
+      try {
+        await this.executeTask(task);
+      } catch (e) {
+        console.error(`[TaskQueue] Unexpected error on task ${task.id}:`, e);
+      }
+
+      // Random 5~10s delay between tasks
+      if (this.queue.length > 0) {
+        const delay = randomDelay(5000, 10000);
+        console.log(`[TaskQueue] Waiting ${(delay / 1000).toFixed(1)}s before next task...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+
+    this._currentTarget = null;
+    this.isProcessing = false;
+  }
+
+  private async executeTask(task: Task) {
+    console.log(`[TaskQueue] Executing task ${task.id} → ${task.targetName}`);
+
+    // Mark as processing
+    const db = await getDb();
+    await db.update(({ tasks }) => {
+      const t = tasks.find(x => x.id === task.id);
+      if (t) t.status = 'processing';
+    });
+
+    const currentIndex = task.currentContentIndex || 0;
+    const contentToSend = task.content[currentIndex];
+
+    if (!contentToSend) {
+      this._lastError = `no content at index ${currentIndex}`;
+      await this.markFailed(task.id, this._lastError);
+      await addLog('error', `Task ${task.id}【${task.targetName}】失败: ${this._lastError}`, task.id);
+      return;
+    }
+
+    let success = false;
+
+    // First attempt
+    try {
+      console.log(`[TaskQueue] Sending to [${task.targetType}] ${task.targetName}: ${contentToSend.substring(0, 50)}...`);
+      const result = await wxBridge.send(task.targetName, contentToSend, task.targetType);
+      if (result.success) {
+        success = true;
+      } else {
+        throw new Error(result.error || 'wx4py send failed');
+      }
+    } catch (e: any) {
+      // Retry once after 2s
+      console.warn(`[TaskQueue] First attempt failed for task ${task.id}: ${e.message}, retrying in 2s...`);
+      await new Promise(r => setTimeout(r, 2000));
+
+      try {
+        const result = await wxBridge.send(task.targetName, contentToSend, task.targetType);
+        if (result.success) {
+          success = true;
+        } else {
+          throw new Error(result.error || 'wx4py send failed on retry');
+        }
+      } catch (retryErr: any) {
+        this._lastError = `${retryErr.message}`;
+        await this.markFailed(task.id, this._lastError);
+        await addLog('error', `Task ${task.id}【${task.targetName}】失败(已重试): ${this._lastError}`, task.id);
+        return;
+      }
+    }
+
+    if (success) {
+      // Update status / reschedule
+      const db2 = await getDb();
+      await db2.update(({ tasks }) => {
+        const t = tasks.find(x => x.id === task.id);
+        if (!t) return;
+
+        if (t.recurrence && t.recurrence !== 'once') {
+          t.scheduleTime = calculateNextTime(t);
+          t.status = 'pending';
+          t.currentContentIndex = (currentIndex + 1) % t.content.length;
+          console.log(`[TaskQueue] Rescheduled task ${t.id} → ${t.scheduleTime}, content index: ${t.currentContentIndex}`);
+        } else {
+          t.status = 'success';
+        }
+      });
+
+      const nextLabel = task.recurrence && task.recurrence !== 'once' ? ' → 已排下次' : ' → 完成';
+      await addLog('info', `Task ${task.id}【${task.targetName}】${nextLabel}`, task.id);
+    }
+  }
+
+  private async markFailed(taskId: string, error: string) {
+    const db = await getDb();
+    await db.update(({ tasks }) => {
+      const t = tasks.find(x => x.id === taskId);
+      if (t) {
+        t.status = 'failed';
+        t.error = error;
+      }
+    });
+  }
+}
+
+/** Global singleton task queue */
+export const taskQueue = new TaskQueue();

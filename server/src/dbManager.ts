@@ -1,119 +1,140 @@
 import { JSONFilePreset } from 'lowdb/node';
 import { Low } from 'lowdb';
+import fs from 'fs';
 import path from 'path';
-import { UserManager } from './userManager.js';
+import { Data, Task, Template, Contact, Log } from './types.js';
 
-export interface Template {
-  id: string;
-  name: string;
-  type: 'text';
-  content: string[];
-  // Schedule configuration
-  recurrence: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
-  intervalValue?: number;
-  intervalUnit?: 'minute' | 'hour' | 'day';
-  uiTime?: string;
-  uiWeekday?: string;
-  uiDayOfMonth?: string;
-  createdAt: string;
+export type { Task, Template, Contact, Log, Data };
+
+const DB_PATH = path.resolve(process.cwd(), 'db.json');
+const MAX_LOG_ENTRIES = 500;
+
+const defaultData: Data = {
+  contacts: [],
+  tasks: [],
+  templates: [],
+  logs: [],
+};
+
+let dbInstance: Low<Data> | null = null;
+
+export async function initDB(): Promise<Low<Data>> {
+  if (dbInstance) return dbInstance;
+
+  console.log(`[DB] Initializing at ${DB_PATH}`);
+  const db = await JSONFilePreset<Data>(DB_PATH, defaultData);
+
+  // Ensure all arrays exist
+  await db.update((data) => {
+    if (!data.contacts) data.contacts = [];
+    if (!data.tasks) data.tasks = [];
+    if (!data.templates) data.templates = [];
+    if (!data.logs) data.logs = [];
+
+    // Migration: string content → string[]
+    data.tasks.forEach((t: any) => {
+      if (typeof t.content === 'string') t.content = [t.content];
+      if (typeof t.currentContentIndex === 'undefined') t.currentContentIndex = 0;
+      // Recovery: tasks stuck in 'processing' at startup → reset to pending
+      if (t.status === 'processing') {
+        console.log(`[DB] Recovering stuck task ${t.id} → pending`);
+        t.status = 'pending';
+      }
+    });
+
+    data.templates.forEach((t: any) => {
+      if (typeof t.content === 'string') t.content = [t.content];
+    });
+
+    // Trim logs to prevent DB bloat
+    if (data.logs && data.logs.length > MAX_LOG_ENTRIES) {
+      const trimmed = data.logs.length - MAX_LOG_ENTRIES;
+      data.logs = data.logs.slice(-MAX_LOG_ENTRIES);
+      console.log(`[DB] Trimmed ${trimmed} old log entries (keeping last ${MAX_LOG_ENTRIES})`);
+    }
+  });
+
+  // Migrate from legacy multi-user directories
+  await migrateFromLegacy(db);
+
+  dbInstance = db;
+  return db;
 }
 
-export interface Task {
-  id: string;
-  templateId?: string; // Optional reference to template
-  type: 'text';
-  targetType: 'group' | 'contact';
-  targetId: string; // Group ID or Contact ID
-  targetName: string; // For display
-  content: string[]; // Text content list
-  currentContentIndex?: number; // Index of current content to send
-  scheduleTime: string; // ISO String
-  recurrence?: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
-  intervalValue?: number; // e.g. 30
-  intervalUnit?: 'minute' | 'hour' | 'day'; // e.g. 'minute'
-  status: 'pending' | 'processing' | 'success' | 'failed';
-  createdAt: string;
-  updatedAt?: string;
-  error?: string;
+export async function getDb(): Promise<Low<Data>> {
+  if (!dbInstance) {
+    return initDB();
+  }
+  return dbInstance;
 }
 
-export interface Log {
-  id: string;
-  timestamp: string;
-  level: 'info' | 'error' | 'warn';
-  message: string;
-  taskId?: string;
-}
+async function migrateFromLegacy(db: Low<Data>): Promise<void> {
+  const usersDir = path.resolve(process.cwd(), 'users');
+  if (!fs.existsSync(usersDir)) return;
 
-export interface Data {
-  tasks: Task[];
-  templates: Template[];
-  logs: Log[];
-}
+  console.log('[DB] Detected legacy users/ directory, migrating...');
 
-const defaultData: Data = { tasks: [], templates: [], logs: [] };
+  try {
+    const userDirs = fs.readdirSync(usersDir);
+    let migratedTasks = 0;
+    let migratedTemplates = 0;
 
-export class DBManager {
-    private static instances: Map<string, Low<Data>> = new Map();
+    for (const userDir of userDirs) {
+      const oldDbPath = path.join(usersDir, userDir, 'db.json');
+      if (!fs.existsSync(oldDbPath)) continue;
 
-    static async getDb(username: string): Promise<Low<Data>> {
-        if (this.instances.has(username)) {
-            return this.instances.get(username)!;
+      try {
+        const oldData = JSON.parse(fs.readFileSync(oldDbPath, 'utf-8'));
+
+        if (oldData.tasks) {
+          for (const task of oldData.tasks) {
+            // Skip if already exists (by id)
+            if (db.data.tasks.find(t => t.id === task.id)) continue;
+            if (typeof task.content === 'string') task.content = [task.content];
+            if (typeof task.currentContentIndex === 'undefined') task.currentContentIndex = 0;
+            db.data.tasks.push(task);
+            migratedTasks++;
+          }
         }
 
-        const userDir = UserManager.getUserDir(username);
-        const dbPath = path.join(userDir, 'db.json');
-        
-        console.log(`Loading DB for ${username} at ${dbPath}`);
-        const db = await JSONFilePreset<Data>(dbPath, defaultData);
-        
-        // Ensure templates array exists (migration for old DBs)
-        await db.update((data) => {
-            if (!data.templates) {
-                data.templates = [];
-            }
-            if (!data.tasks) {
-                data.tasks = [];
-            }
-            if (!data.logs) {
-                data.logs = [];
-            }
-
-            // Migration: Convert string content to string[]
-            data.tasks.forEach((t: any) => {
-                if (typeof t.content === 'string') {
-                    t.content = [t.content];
-                }
-                if (typeof t.currentContentIndex === 'undefined') {
-                    t.currentContentIndex = 0;
-                }
-                // Recovery: tasks stuck in 'processing' at startup mean the server
-                // crashed mid-execution — reset them so the scheduler picks them up again.
-                if (t.status === 'processing') {
-                    console.log(`[DBManager] Recovering stuck processing task ${t.id} → pending`);
-                    t.status = 'pending';
-                }
-            });
-
-            data.templates.forEach((t: any) => {
-                if (typeof t.content === 'string') {
-                    t.content = [t.content];
-                }
-            });
-        });
-
-        this.instances.set(username, db);
-        return db;
+        if (oldData.templates) {
+          for (const tpl of oldData.templates) {
+            if (db.data.templates.find(t => t.id === tpl.id)) continue;
+            if (typeof tpl.content === 'string') tpl.content = [tpl.content];
+            db.data.templates.push(tpl);
+            migratedTemplates++;
+          }
+        }
+      } catch (e) {
+        console.error(`[DB] Failed to migrate from ${oldDbPath}:`, e);
+      }
     }
+
+    await db.write();
+    console.log(`[DB] Migration complete: ${migratedTasks} tasks, ${migratedTemplates} templates`);
+    console.log('[DB] Legacy users/ directory kept for safety — you can delete it manually');
+  } catch (e) {
+    console.error('[DB] Legacy migration failed:', e);
+  }
 }
 
-export const addLog = async (username: string, level: 'info' | 'error', message: string, taskId?: string) => {
-    const db = await DBManager.getDb(username);
-    await db.update(({ logs }) => logs.push({
-        id: Date.now().toString(),
-        timestamp: new Date().toISOString(),
-        level,
-        message,
-        taskId
-    }));
-};
+export async function addLog(
+  level: 'info' | 'error' | 'warn',
+  message: string,
+  taskId?: string
+): Promise<void> {
+  const db = await getDb();
+  await db.update(({ logs }) => {
+    logs.push({
+      id: Date.now().toString() + Math.random().toString(36).slice(2),
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      taskId,
+    });
+    // Keep only the latest N entries
+    if (logs.length > MAX_LOG_ENTRIES) {
+      logs.splice(0, logs.length - MAX_LOG_ENTRIES);
+    }
+  });
+}
