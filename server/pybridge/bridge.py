@@ -112,7 +112,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'ok': False, 'error': str(e)})
 
     def _handle_deep_health(self):
-        """Deep health: can we actually interact with WeChat UI?"""
+        """Deep health: check if WeChat UI is usable.
+        Uses only lightweight Win32 calls — no UIA tree traversal, no search, no input simulation.
+        """
         try:
             wx = get_wx()
             hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
@@ -125,25 +127,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send({'ok': False, 'reason': '微信窗口不可见', 'stage': 'visible'})
                 return
 
-            # Check window title — login page has different title
+            # Check window title: login page shows "微信登录" or similar
             try:
-                title = wx._window.title
-                if '登录' in title:
+                title = wx._window.title or ''
+                if '登录' in title or '登錄' in title or 'login' in title.lower():
                     self._send({'ok': False, 'reason': '微信登录页-需重新扫码', 'stage': 'login_page'})
                     return
             except:
                 pass
 
-            # Check if UIA tree has children (empty on login page)
-            try:
-                uia = wx._window._uia
-                children = uia.GetChildren() if uia else []
-                if len(children) == 0:
-                    self._send({'ok': False, 'reason': '微信窗口无子控件(可能登录页)', 'stage': 'empty_ui'})
-                    return
-            except:
-                pass
-
+            # Window visible + title not login → assume good
             self._send({'ok': True, 'reason': '正常', 'stage': 'ok'})
         except Exception as e:
             self._send({'ok': False, 'reason': f'健康检查异常: {e}', 'stage': 'fatal'})

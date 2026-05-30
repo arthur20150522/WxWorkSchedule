@@ -36,6 +36,7 @@ export const BotManager = {
   },
 
   startHealthMonitor() {
+    // 5-minute interval — frequent enough to catch kicks, rare enough to avoid suspicion
     setInterval(async () => {
       try {
         const res = await wxBridge.deepHealth();
@@ -44,6 +45,7 @@ export const BotManager = {
 
         if (wasOnline && !res.ok) {
           console.warn(`[HealthMonitor] WeChat offline: ${res.reason}`);
+          // Only push once per offline session
           if (!wasKickedNotified) {
             pushNotify('微信掉线', `原因: ${res.reason}`);
             wasKickedNotified = true;
@@ -54,12 +56,14 @@ export const BotManager = {
           pushNotify('微信已恢复', '');
         }
       } catch (e) {
-        if (online) {
+        // Bridge unreachable — push once
+        if (online && !wasKickedNotified) {
           pushNotify('微信掉线', 'wx4py bridge 无法连接');
           online = false;
+          wasKickedNotified = true;
         }
       }
-    }, 60000);
-    console.log('[HealthMonitor] Started (60s interval)');
+    }, 300000); // 5 min
+    console.log('[HealthMonitor] Started (5min interval)');
   }
 };
