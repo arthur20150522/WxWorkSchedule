@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { RefreshCw, Trash2, FileText } from 'lucide-react';
+import { RefreshCw, Trash2, FileText, Send } from 'lucide-react';
 import clsx from 'clsx';
 import { t } from '../utils/i18n';
 import { Task, Contact, Template } from '../types';
@@ -61,6 +61,10 @@ export const TasksView: React.FC<TasksViewProps> = ({
     const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'processing' | 'success' | 'failed'>('all');
     const [selectedTargets, setSelectedTargets] = useState<{ type: 'group' | 'contact'; name: string }[]>([]);
     const [manualTarget, setManualTarget] = useState('');
+    const [isBatchMode, setIsBatchMode] = useState(false);
+    const [batchTemplateIds, setBatchTemplateIds] = useState<Set<string>>(new Set());
+    const [batchTime, setBatchTime] = useState('');
+    const [batchRecurrence, setBatchRecurrence] = useState<Task['recurrence']>('once');
 
     const getIntervalUnitLabel = (unit?: 'minute' | 'hour' | 'day') => {
         if (unit === 'hour') return t.hours;
@@ -163,6 +167,55 @@ export const TasksView: React.FC<TasksViewProps> = ({
         }
     };
 
+    const batchCreateTasks = async () => {
+        const selectedTemplates = templates.filter(t => batchTemplateIds.has(t.id));
+        if (selectedTemplates.length === 0) {
+            showToast('请选择至少一个模板', 'error');
+            return;
+        }
+        if (!batchTime) {
+            showToast('请选择发送时间', 'error');
+            return;
+        }
+
+        let count = 0;
+        let failed = 0;
+        const scheduleTime = new Date(batchTime).toISOString();
+
+        try {
+            for (const tpl of selectedTemplates) {
+                if (!tpl.targets || tpl.targets.length === 0) continue;
+                for (const target of tpl.targets) {
+                    try {
+                        await axios.post('/api/tasks', {
+                            type: tpl.type,
+                            content: tpl.content,
+                            targetType: target.type,
+                            targetName: target.name,
+                            scheduleTime,
+                            recurrence: batchRecurrence,
+                            intervalValue: tpl.intervalValue,
+                            intervalUnit: tpl.intervalUnit,
+                            uiTime: tpl.uiTime,
+                            uiWeekday: tpl.uiWeekday,
+                            uiDayOfMonth: tpl.uiDayOfMonth,
+                            templateId: tpl.id,
+                        });
+                        count++;
+                    } catch {
+                        failed++;
+                    }
+                }
+            }
+            showToast(`批量生成完成: ${count} 成功${failed > 0 ? `，${failed} 失败` : ''}`, failed > 0 ? 'error' : 'success');
+            await fetchTasks();
+            setBatchTemplateIds(new Set());
+            setBatchTime('');
+        } catch (e) {
+            showToast('批量生成失败', 'error');
+        }
+    };
+
     const editTask = (task: Task) => {
         const date = new Date(task.scheduleTime);
         const hours = date.getHours().toString().padStart(2, '0');
@@ -232,13 +285,93 @@ export const TasksView: React.FC<TasksViewProps> = ({
             {/* Create Task Form */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
               <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-lg font-bold">{isEditing ? '编辑任务' : t.scheduleNew}</h2>
+                  <div className="flex items-center gap-4">
+                      <h2 className="text-lg font-bold">{isEditing ? '编辑任务' : (isBatchMode ? '批量创建任务' : t.scheduleNew)}</h2>
+                      {!isEditing && (
+                          <div className="flex bg-gray-100 rounded-lg p-0.5">
+                              <button
+                                  type="button"
+                                  onClick={() => setIsBatchMode(false)}
+                                  className={`px-3 py-1 text-sm rounded-md transition ${!isBatchMode ? 'bg-white shadow text-gray-900 font-medium' : 'text-gray-500'}`}
+                              >单个创建</button>
+                              <button
+                                  type="button"
+                                  onClick={() => setIsBatchMode(true)}
+                                  className={`px-3 py-1 text-sm rounded-md transition ${isBatchMode ? 'bg-white shadow text-gray-900 font-medium' : 'text-gray-500'}`}
+                              >批量创建</button>
+                          </div>
+                      )}
+                  </div>
                   {isEditing && (
                       <button onClick={resetForm} className="text-sm text-gray-500 hover:text-gray-700">
                           取消编辑
                       </button>
                   )}
               </div>
+
+              {isBatchMode ? (
+                /* ===== Batch mode ===== */
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">选择模板（内容以模板为准，无需编辑）</label>
+                        <div className="max-h-48 overflow-y-auto border border-gray-300 rounded p-3 space-y-1">
+                            {templates.filter(t => t.targets && t.targets.length > 0).map(tpl => (
+                                <label key={tpl.id} className="flex items-center gap-2 p-1 hover:bg-gray-50 rounded cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={batchTemplateIds.has(tpl.id)}
+                                        onChange={() => {
+                                            setBatchTemplateIds(prev => {
+                                                const next = new Set(prev);
+                                                next.has(tpl.id) ? next.delete(tpl.id) : next.add(tpl.id);
+                                                return next;
+                                            });
+                                        }}
+                                        className="rounded text-blue-600 focus:ring-blue-500"
+                                    />
+                                    <span className="text-sm flex-1">{tpl.name}</span>
+                                    <span className="text-xs text-gray-400">{tpl.targets?.length || 0} 个目标</span>
+                                </label>
+                            ))}
+                            {templates.filter(t => t.targets && t.targets.length > 0).length === 0 && (
+                                <p className="text-sm text-gray-400 text-center py-4">暂无可用的模板（需要模板有关联对象），请先在"模板管理"中设置</p>
+                            )}
+                        </div>
+                        {templates.filter(t => t.targets && t.targets.length > 0).length > 0 && (
+                            <div className="flex gap-1 mt-1">
+                                <button type="button" onClick={() => setBatchTemplateIds(new Set(templates.filter(t => t.targets?.length).map(t => t.id)))} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200">全选</button>
+                                <button type="button" onClick={() => setBatchTemplateIds(new Set())} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200">清空</button>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">首次发送时间</label>
+                            <input type="datetime-local" value={batchTime} onChange={e => setBatchTime(e.target.value)} className="w-full p-2 border border-gray-300 rounded text-sm" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">重复类型</label>
+                            <select value={batchRecurrence} onChange={e => setBatchRecurrence(e.target.value as any)} className="w-full p-2 border border-gray-300 rounded text-sm">
+                                <option value="once">一次性</option>
+                                <option value="daily">每天</option>
+                                <option value="weekly">每周</option>
+                                <option value="monthly">每月</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={batchCreateTasks}
+                        disabled={batchTemplateIds.size === 0 || !batchTime}
+                        className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <Send className="w-5 h-5" /> 批量生成任务
+                    </button>
+                </div>
+              ) : (
+                /* ===== Single mode ===== */
               <form onSubmit={createTask} className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {!isEditing && (
                     <div className="md:col-span-2">
@@ -546,6 +679,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                   </button>
                 </div>
               </form>
+              )}
             </div>
 
             {/* Task List */}

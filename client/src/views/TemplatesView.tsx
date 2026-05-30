@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { RefreshCw, FileText, Trash2, Upload, Download, Square, CheckSquare, Send } from 'lucide-react';
+import { RefreshCw, FileText, Trash2, Upload, Download } from 'lucide-react';
 import { t } from '../utils/i18n';
 import { Template, Contact } from '../types';
 import axios from 'axios';
@@ -9,7 +9,6 @@ interface TemplatesViewProps {
     fetchTemplates: () => void;
     showToast: (msg: string, type: 'success' | 'error' | 'info') => void;
     onGenerateTask: (template: Template) => void;
-    onBatchGenerate: (templates: Template[], scheduleTime: string) => void;
     contacts: Contact[];
 }
 
@@ -27,30 +26,11 @@ const getDefaultTemplate = (): Partial<Template> => ({
 });
 
 export const TemplatesView: React.FC<TemplatesViewProps> = ({
-    templates, fetchTemplates, showToast, onGenerateTask, onBatchGenerate, contacts
+    templates, fetchTemplates, showToast, onGenerateTask, contacts
 }) => {
     const [isTemplateEditing, setIsTemplateEditing] = useState(false);
     const [newTemplate, setNewTemplate] = useState<Partial<Template>>(getDefaultTemplate());
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-    const [batchTime, setBatchTime] = useState(() => new Date().toISOString().slice(0, 16));
-
-    const toggleSelect = (id: string) => {
-        setSelectedIds(prev => {
-            const next = new Set(prev);
-            next.has(id) ? next.delete(id) : next.add(id);
-            return next;
-        });
-    };
-
-    const selectAll = () => setSelectedIds(new Set(templates.map(t => t.id)));
-    const clearSelect = () => setSelectedIds(new Set());
-
-    const handleBatchGenerate = async () => {
-        const selected = templates.filter(t => selectedIds.has(t.id));
-        if (selected.length === 0) return;
-        onBatchGenerate(selected, batchTime);
-    };
 
     // 全量导出 — 一个 JSON 包含 contacts + templates + tasks
     const handleExport = async () => {
@@ -364,12 +344,6 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                     <div className="flex justify-between items-center">
                         <h2 className="text-lg font-bold">{t.templateList}</h2>
                         <div className="flex items-center gap-1">
-                            {templates.length > 0 && (
-                                <>
-                                    <button onClick={selectAll} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600">全选</button>
-                                    <button onClick={clearSelect} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600">清空</button>
-                                </>
-                            )}
                             <button onClick={handleExport} className="p-2 hover:bg-gray-100 rounded-full" title="导出 JSON">
                                 <Download className="w-4 h-4 text-gray-600" />
                             </button>
@@ -382,41 +356,11 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                             </button>
                         </div>
                     </div>
-
-                    {/* Batch toolbar */}
-                    {selectedIds.size > 0 && (
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-3 flex-wrap">
-                            <span className="text-sm text-blue-700 font-medium">已选 {selectedIds.size} 个模板</span>
-                            <input
-                                type="datetime-local"
-                                value={batchTime}
-                                onChange={e => setBatchTime(e.target.value)}
-                                className="text-sm border border-blue-300 rounded px-2 py-1 bg-white"
-                            />
-                            <button
-                                onClick={handleBatchGenerate}
-                                className="flex items-center gap-1 bg-blue-600 text-white text-sm px-3 py-1.5 rounded hover:bg-blue-700"
-                            >
-                                <Send className="w-4 h-4" /> 批量生成任务
-                            </button>
-                        </div>
-                    )}
-
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {templates.map(tpl => (
                             <div key={tpl.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
                                 <div className="flex justify-between items-start mb-2">
-                                    <div className="flex items-center gap-2">
-                                        <button
-                                            onClick={() => toggleSelect(tpl.id)}
-                                            className="flex-shrink-0"
-                                        >
-                                            {selectedIds.has(tpl.id)
-                                                ? <CheckSquare className="w-5 h-5 text-blue-600" />
-                                                : <Square className="w-5 h-5 text-gray-400 hover:text-gray-600" />}
-                                        </button>
-                                        <h3 className="font-bold text-lg">{tpl.name}</h3>
-                                    </div>
+                                    <h3 className="font-bold text-lg">{tpl.name}</h3>
                                     <div className="flex gap-2">
                                         <button onClick={() => onGenerateTask(tpl)} className="text-green-600 hover:text-green-800" title={t.quickGenerate}>
                                             <RefreshCw className="w-5 h-5" />
