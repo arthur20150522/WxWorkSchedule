@@ -1,5 +1,6 @@
 import { Task, getDb, addLog } from './dbManager.js';
 import { wxBridge } from './wxBridge.js';
+import { pushNotify } from './pushNotify.js';
 import { addDays, addWeeks, addMonths, addMinutes, addHours } from 'date-fns';
 
 /** Random delay between min and max milliseconds */
@@ -164,6 +165,7 @@ class TaskQueue {
         this._lastError = `${retryErr.message}`;
         await this.markFailed(task.id, this._lastError);
         await addLog('error', `Task ${task.id}【${task.targetName}】失败(已重试): ${this._lastError}`, task.id);
+        pushNotify('消息发送失败', `[${task.targetType === 'group' ? '群' : '人'}] ${task.targetName}: ${this._lastError}`);
         return;
       }
     }
