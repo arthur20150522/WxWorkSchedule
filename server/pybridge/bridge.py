@@ -85,7 +85,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def _handle_status(self):
         try:
             wx = get_wx()
-            self._send({'connected': wx.is_connected, 'error': None})
+            connected = wx.is_connected
+            if not connected:
+                # Double-check: maybe UIA is fine but is_connected flag is stale
+                try:
+                    hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
+                    if hwnd:
+                        from wx4py.core.win32 import is_window_visible
+                        if is_window_visible(hwnd):
+                            connected = True
+                except:
+                    pass
+            self._send({'connected': connected, 'error': None})
         except Exception as e:
             self._send({'connected': False, 'error': str(e)})
 
@@ -214,13 +225,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if hasattr(wx, '_window') and wx._window:
                 hwnd = wx._window.hwnd
                 if hwnd:
-                    from wx4py.core.win32 import is_window_visible, bring_window_to_front
+                    from wx4py.core.win32 import is_window_visible
+                    import win32gui, win32con
                     visible = is_window_visible(hwnd)
                     log.info(f'[window] before send: visible={visible}')
                     if not visible:
-                        log.info('[window] restoring window before send...')
-                        bring_window_to_front(hwnd)
-                        log.info(f'[window] restored: visible={is_window_visible(hwnd)}')
+                        log.info('[window] force-restoring window...')
+                        # Pull out of tray with SW_SHOW
+                        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                        win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW)
+                        win32gui.SetForegroundWindow(hwnd)
+                        win32gui.SetWindowPos(hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0,
+                            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
+                        log.info(f'[window] force-restore result: visible={is_window_visible(hwnd)}')
         except Exception as e:
             log.warning(f'[window] pre-send window check failed: {e}')
 

@@ -90,7 +90,7 @@ apiRouter.get('/status', async (_req, res) => {
     };
 
     res.json({
-      online: online && botStatus.online,
+      online,
       queueLength: taskQueue.length,
       currentTarget: taskQueue.currentTarget,
       lastError: lastError || undefined,
