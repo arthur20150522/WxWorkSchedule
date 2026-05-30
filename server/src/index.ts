@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { app } from './api.js';
-import { initDB } from './dbManager.js';
+import { initDB, getDb, addLog } from './dbManager.js';
 import { BotManager } from './botManager.js';
 import { startScheduler } from './scheduler.js';
 import express from 'express';
@@ -10,6 +10,39 @@ import { fileURLToPath } from 'node:url';
 const PORT = process.env.PORT || 3000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+/** Check every minute and run at 06:00 each day */
+function startAutoRecover() {
+  let lastRunDate = '';
+  setInterval(async () => {
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    if (hour === 6 && minute === 0 && dateStr !== lastRunDate) {
+      lastRunDate = dateStr;
+      try {
+        const db = await getDb();
+        let count = 0;
+        await db.update(({ tasks }) => {
+          for (const t of tasks) {
+            if (t.status === 'failed' && t.recurrence && t.recurrence !== 'once') {
+              t.status = 'pending';
+              t.error = undefined;
+              count++;
+            }
+          }
+        });
+        if (count > 0) {
+          console.log(`[AutoRecover] Recovered ${count} failed recurring tasks → pending`);
+          await addLog('info', `自动恢复: ${count} 个失败周期任务 → pending`);
+        }
+      } catch (e) {
+        console.error('[AutoRecover] Failed:', (e as Error).message);
+      }
+    }
+  }, 60000);
+}
 
 const main = async () => {
   // Polyfill fetch for Node.js < 18
@@ -53,6 +86,10 @@ const main = async () => {
 
   // 5. Start scheduler
   startScheduler();
+
+  // 6. Daily auto-recover failed recurring tasks at 06:00
+  startAutoRecover();
+  console.log('[AutoRecover] Enabled — runs daily at 06:00');
 };
 
 main().catch(console.error);
