@@ -64,7 +64,6 @@ export const TasksView: React.FC<TasksViewProps> = ({
     const [isBatchMode, setIsBatchMode] = useState(false);
     const [batchTemplateIds, setBatchTemplateIds] = useState<Set<string>>(new Set());
     const [batchTime, setBatchTime] = useState('');
-    const [batchRecurrence, setBatchRecurrence] = useState<Task['recurrence']>('once');
     const [batchTargets, setBatchTargets] = useState<{ type: 'group' | 'contact'; name: string }[]>([]);
     const [batchManualTarget, setBatchManualTarget] = useState('');
 
@@ -203,7 +202,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                             targetType: target.type,
                             targetName: target.name,
                             scheduleTime,
-                            recurrence: batchRecurrence,
+                            recurrence: tpl.recurrence || 'once',
                             intervalValue: tpl.intervalValue,
                             intervalUnit: tpl.intervalUnit,
                             uiTime: tpl.uiTime,
@@ -408,20 +407,10 @@ export const TasksView: React.FC<TasksViewProps> = ({
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">首次发送时间</label>
-                            <input type="datetime-local" value={batchTime} onChange={e => setBatchTime(e.target.value)} className="w-full p-2 border border-gray-300 rounded text-sm" />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">重复类型</label>
-                            <select value={batchRecurrence} onChange={e => setBatchRecurrence(e.target.value as any)} className="w-full p-2 border border-gray-300 rounded text-sm">
-                                <option value="once">一次性</option>
-                                <option value="daily">每天</option>
-                                <option value="weekly">每周</option>
-                                <option value="monthly">每月</option>
-                            </select>
-                        </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">首次发送时间</label>
+                        <input type="datetime-local" value={batchTime} onChange={e => setBatchTime(e.target.value)} className="w-full p-2 border border-gray-300 rounded text-sm" />
+                        <p className="text-xs text-gray-400 mt-1">每个模板的周期和重复设置以模板自身为准</p>
                     </div>
 
                     <button
