@@ -233,9 +233,9 @@ function App() {
                   showToast={showToast}
               />
           )}
-          {activeTab === 'liveSend' && (
+          <div style={{ display: activeTab === 'liveSend' ? 'block' : 'none' }}>
               <LiveSendView liveLogs={liveLogs} fetchLiveLogs={fetchLiveLogs} />
-          )}
+          </div>
           {activeTab === 'templates' && (
               <TemplatesView
                   templates={templates}
