@@ -798,13 +798,16 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                    );
                                })}
                            </div>
-                           {(newTask.weeklySlots || []).length < 7 && (
+                           {(() => {
+                               const usedAll = new Set((newTask.weeklySlots || []).flatMap(s => s.days));
+                               if (usedAll.size >= 7) return null;
+                               return (
                                <button type="button" onClick={() => {
                                    const usedAll = new Set((newTask.weeklySlots || []).flatMap(s => s.days));
                                    const firstFree = ['1','2','3','4','5','6','7'].find(d => !usedAll.has(d)) || '1';
                                    setNewTask({...newTask, weeklySlots: [...(newTask.weeklySlots || []), { days: [firstFree], time: '09:00' }]});
                                }} className="text-xs text-blue-600 hover:text-blue-800 mt-1">+ 添加时段</button>
-                           )}
+                           )})()}
                        </div>
                    )}
 
