@@ -6,6 +6,7 @@ import { getDb, addLog, addLiveLog, getLiveLogs, Task, Template, Contact } from 
 import { verifyPassword, generateToken } from './auth.js';
 import { authenticateToken, AuthRequest } from './authMiddleware.js';
 import { wxBridge } from './wxBridge.js';
+import { pushNotify } from './pushNotify.js';
 import { taskQueue } from './taskQueue.js';
 
 const app = express();
@@ -501,6 +502,7 @@ apiRouter.post('/send-live', async (req, res) => {
       await addLog('info', `Live send to [${targetType}] ${targetName}: success (${duration}ms)`);
     } else {
       await addLog('error', `Live send to [${targetType}] ${targetName}: failed — ${result.error || 'unknown'}`);
+      pushNotify('实时发送失败', `[${targetType === 'group' ? '群' : '人'}] ${targetName}: ${result.error || 'unknown'}`);
     }
 
     res.json({ success: result.success, duration, error: result.error || null });
@@ -509,6 +511,7 @@ apiRouter.post('/send-live', async (req, res) => {
     const error = (e as Error).message;
     await addLiveLog({ targetName, targetType, content, success: false, duration, error });
     await addLog('error', `Live send to [${targetType}] ${targetName}: exception — ${error}`);
+    pushNotify('实时发送异常', `[${targetType === 'group' ? '群' : '人'}] ${targetName}: ${error}`);
     res.json({ success: false, duration, error });
   }
 });
