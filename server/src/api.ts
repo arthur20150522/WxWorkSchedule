@@ -365,6 +365,27 @@ apiRouter.delete('/tasks/batch-delete', async (req, res) => {
   }
 });
 
+// Emergency: cancel all pending tasks
+apiRouter.post('/tasks/cancel-pending', async (_req, res) => {
+  try {
+    const db = await getDb();
+    let count = 0;
+    await db.update(({ tasks }) => {
+      for (const t of tasks) {
+        if (t.status === 'pending' || t.status === 'processing') {
+          t.status = 'failed';
+          t.error = t.error || '手动紧急取消';
+          count++;
+        }
+      }
+    });
+    await addLog('warn', `Emergency cancel: ${count} pending/processing tasks → failed`);
+    res.json({ success: true, count });
+  } catch (e) {
+    handleError(res, e);
+  }
+});
+
 apiRouter.delete('/tasks/:id', async (req, res) => {
   try {
     const db = await getDb();

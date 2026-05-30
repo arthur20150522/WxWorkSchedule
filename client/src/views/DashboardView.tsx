@@ -1,12 +1,15 @@
-import React from 'react';
-import { RefreshCw, CheckCircle, XCircle, Loader2, AlertTriangle, BarChart3 } from 'lucide-react';
+import React, { useState } from 'react';
+import { RefreshCw, CheckCircle, XCircle, Loader2, AlertTriangle, BarChart3, ShieldOff } from 'lucide-react';
 import clsx from 'clsx';
 import { t } from '../utils/i18n';
 import { BotStatus, TaskStats } from '../types';
+import axios from 'axios';
 
 interface DashboardViewProps {
     botStatus: BotStatus;
     isStatusLoading: boolean;
+    fetchTasks: () => Promise<void>;
+    showToast: (msg: string, type: 'success' | 'error' | 'info') => void;
 }
 
 const statCard = (value: number, label: string, color: string) => (
@@ -37,9 +40,24 @@ const TaskBoard: React.FC<{ stats: TaskStats }> = ({ stats }) => {
 };
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
-    botStatus, isStatusLoading
+    botStatus, isStatusLoading, fetchTasks, showToast
 }) => {
+    const [canceling, setCanceling] = useState(false);
     const hasQueue = botStatus.queueLength > 0;
+
+    const handleEmergencyCancel = async () => {
+        if (!confirm('确定要紧急取消所有待发送和处理中的任务吗？\n\n此操作会将这些任务标记为失败，不会删除它们。')) return;
+        setCanceling(true);
+        try {
+            const res = await axios.post('/api/tasks/cancel-pending');
+            showToast(`已紧急取消 ${res.data.count} 个任务`, 'success');
+            fetchTasks();
+        } catch (e: any) {
+            showToast('取消失败: ' + (e.response?.data?.error || e.message), 'error');
+        } finally {
+            setCanceling(false);
+        }
+    };
 
     return (
         <div className="max-w-2xl mx-auto space-y-6">
@@ -116,6 +134,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 {!hasQueue && (
                     <div className="mt-4 text-center text-sm text-gray-400">{t.queueEmpty}</div>
                 )}
+            </div>
+
+            {/* 紧急操作 */}
+            <div className="bg-red-50 border-2 border-red-300 rounded-xl p-5">
+                <h3 className="font-bold text-red-800 text-sm mb-3 flex items-center gap-1">
+                    <ShieldOff className="w-4 h-4" />
+                    紧急操作
+                </h3>
+                <p className="text-red-600 text-xs mb-3 leading-relaxed">
+                    立即将所有“待发送”和“发送中”的任务标记为失败，阻止其继续执行。任务不会被删除，可事后在任务管理中查看。
+                </p>
+                <button
+                    onClick={handleEmergencyCancel}
+                    disabled={canceling}
+                    className="w-full py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                    {canceling ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" />执行中...</>
+                    ) : (
+                        <><ShieldOff className="w-4 h-4" />紧急清空任务队列</>
+                    )}
+                </button>
             </div>
 
             {/* 风险提示 */}

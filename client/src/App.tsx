@@ -225,6 +225,8 @@ function App() {
               <DashboardView
                   botStatus={botStatus}
                   isStatusLoading={isStatusLoading}
+                  fetchTasks={fetchTasks}
+                  showToast={showToast}
               />
           )}
           {activeTab === 'contacts' && (
