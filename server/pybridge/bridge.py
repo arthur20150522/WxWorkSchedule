@@ -60,7 +60,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             elif path == '/contacts':
                 self._handle_contacts()
             elif path == '/health':
-                self._send({'ok': True})
+                self._handle_health()
+            elif path == '/deep-health':
+                self._handle_deep_health()
             else:
                 self._send({'error': 'not found'}, 404)
         except Exception as e:
@@ -99,6 +101,58 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'connected': connected, 'error': None})
         except Exception as e:
             self._send({'connected': False, 'error': str(e)})
+
+    def _handle_health(self):
+        """Quick health: is the process alive and window exists?"""
+        try:
+            wx = get_wx()
+            hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
+            self._send({'ok': True, 'hwnd': hwnd, 'connected': wx.is_connected})
+        except Exception as e:
+            self._send({'ok': False, 'error': str(e)})
+
+    def _handle_deep_health(self):
+        """Deep health: can we actually interact with WeChat UI?"""
+        try:
+            wx = get_wx()
+            # Check 1: window exists and is visible
+            hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
+            if not hwnd:
+                self._send({'ok': False, 'reason': '无微信窗口句柄', 'stage': 'hwnd'})
+                return
+
+            from wx4py.core.win32 import is_window_visible
+            if not is_window_visible(hwnd):
+                self._send({'ok': False, 'reason': '微信窗口不可见(可能在托盘或锁屏)', 'stage': 'visible'})
+                return
+
+            # Check 2: try to find a basic UI element (chat list or search box)
+            try:
+                # Try to find the chat list — if login page, this fails
+                window = wx._window
+                chat_list = window.find_first('ListControl', depth=3)
+                if chat_list:
+                    self._send({'ok': True, 'reason': '正常', 'stage': 'chat_list'})
+                    return
+
+                # Fallback: check if there's a search box
+                search_box = window.find_first('EditControl', depth=3)
+                if search_box:
+                    self._send({'ok': True, 'reason': '正常(搜索框)', 'stage': 'search_box'})
+                    return
+
+                # Neither found — likely login screen or frozen
+                # Try to identify login screen
+                qr = window.find_first('TextControl', 3)
+                if qr and ('登录' in (qr.Name or '') or '二维码' in (qr.Name or '')):
+                    self._send({'ok': False, 'reason': '微信登录页-需重新扫码', 'stage': 'login_page'})
+                    return
+
+                self._send({'ok': False, 'reason': '无法定位聊天列表或搜索框', 'stage': 'no_ui'})
+            except Exception as e:
+                self._send({'ok': False, 'reason': f'UIA查询异常: {e}', 'stage': 'uia_error'})
+        except Exception as e:
+            self._send({'ok': False, 'reason': f'健康检查异常: {e}', 'stage': 'fatal'})
 
     def _handle_search(self, qs):
         q = qs.get('q', [''])[0]

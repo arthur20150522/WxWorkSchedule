@@ -63,12 +63,20 @@ apiRouter.get('/status', async (_req, res) => {
   try {
     let online = false;
     let error: string | null = null;
+    let healthReason: string | null = null;
+    let healthStage: string | null = null;
     try {
-      const s = await wxBridge.status();
-      online = s.connected;
-      if (s.error) error = s.error;
+      // Use deep health for accurate status
+      const h = await wxBridge.deepHealth();
+      online = h.ok;
+      if (!h.ok) {
+        healthReason = h.reason || '未知';
+        healthStage = h.stage || '?';
+      }
     } catch (e) {
       error = (e as Error).message;
+      // Fallback to shallow status
+      try { const s = await wxBridge.status(); online = s.connected; } catch {}
     }
 
     const botStatus = BotManager.getStatus();
@@ -97,6 +105,8 @@ apiRouter.get('/status', async (_req, res) => {
       lastError: lastError || undefined,
       loginTime: botStatus.loginTime,
       taskStats,
+      healthReason: healthReason || undefined,
+      healthStage: healthStage || undefined,
     });
   } catch (e) {
     handleError(res, e);

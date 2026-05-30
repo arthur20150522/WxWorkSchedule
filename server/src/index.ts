@@ -90,6 +90,9 @@ const main = async () => {
   // 6. Daily auto-recover failed recurring tasks at 06:00
   startAutoRecover();
   console.log('[AutoRecover] Enabled — runs daily at 06:00');
+
+  // 7. Health monitor — push notification when WeChat goes offline
+  BotManager.startHealthMonitor();
 };
 
 main().catch(console.error);

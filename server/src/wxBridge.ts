@@ -56,7 +56,7 @@ async function fetchBridge(path: string, options?: RequestInit): Promise<any> {
 }
 
 export const wxBridge = {
-  /** Check if the bridge is healthy */
+  /** Quick health check */
   async health(): Promise<boolean> {
     try {
       const data = await fetchBridge('/health');
@@ -64,6 +64,11 @@ export const wxBridge = {
     } catch {
       return false;
     }
+  },
+
+  /** Deep health check: verifies WeChat UI is actually usable */
+  async deepHealth(): Promise<{ ok: boolean; reason?: string; stage?: string }> {
+    return fetchBridge('/deep-health');
   },
 
   /** Get WeChat connection status */
