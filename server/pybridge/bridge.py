@@ -208,7 +208,33 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         wx = get_wx()
         log.info(f'Send to [{target_type}] {target}: {message[:50]}...')
+
+        # Ensure window is visible before sending
+        try:
+            if hasattr(wx, '_window') and wx._window:
+                hwnd = wx._window.hwnd
+                if hwnd:
+                    from wx4py.core.win32 import is_window_visible, bring_window_to_front
+                    visible = is_window_visible(hwnd)
+                    log.info(f'[window] before send: visible={visible}')
+                    if not visible:
+                        log.info('[window] restoring window before send...')
+                        bring_window_to_front(hwnd)
+                        log.info(f'[window] restored: visible={is_window_visible(hwnd)}')
+        except Exception as e:
+            log.warning(f'[window] pre-send window check failed: {e}')
+
         ok = wx.chat_window.send_to(target, message, target_type=target_type)
+
+        # Log window state after
+        try:
+            if hasattr(wx, '_window') and wx._window:
+                hwnd = wx._window.hwnd
+                if hwnd:
+                    log.info(f'[window] after send: visible={is_window_visible(hwnd)}')
+        except:
+            pass
+
         self._send({'success': ok})
 
     def _handle_batch_send(self, body):
