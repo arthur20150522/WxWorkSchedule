@@ -167,6 +167,7 @@ function App() {
     if (!isAuthenticated) return;
     fetchStatus();
     fetchContacts();
+    fetchTemplates();
     const interval = setInterval(fetchStatus, 3000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
