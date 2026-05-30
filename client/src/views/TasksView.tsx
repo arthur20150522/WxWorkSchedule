@@ -768,17 +768,17 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                            })}
                                            <button type="button" onClick={() => {
                                                const slots = [...(newTask.weeklySlots || [{ days: ['1'], time: '09:00' }])];
-                                               slots[rowIdx] = { ...slots[rowIdx], days: prefs[0] };
+                                               slots[rowIdx] = { ...slots[rowIdx], days: prefs[0].filter((d: string) => !usedDays.has(d)) };
                                                setNewTask({...newTask, weeklySlots: slots});
                                            }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">工作日</button>
                                            <button type="button" onClick={() => {
                                                const slots = [...(newTask.weeklySlots || [{ days: ['1'], time: '09:00' }])];
-                                               slots[rowIdx] = { ...slots[rowIdx], days: prefs[1] };
+                                               slots[rowIdx] = { ...slots[rowIdx], days: prefs[1].filter((d: string) => !usedDays.has(d)) };
                                                setNewTask({...newTask, weeklySlots: slots});
                                            }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">周末</button>
                                            <button type="button" onClick={() => {
                                                const slots = [...(newTask.weeklySlots || [{ days: ['1'], time: '09:00' }])];
-                                               slots[rowIdx] = { ...slots[rowIdx], days: prefs[2] };
+                                               slots[rowIdx] = { ...slots[rowIdx], days: prefs[2].filter((d: string) => !usedDays.has(d)) };
                                                setNewTask({...newTask, weeklySlots: slots});
                                            }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">全选</button>
                                            <input type="time" value={slot.time || '09:00'}

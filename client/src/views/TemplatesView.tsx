@@ -311,17 +311,17 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                                })}
                                                <button type="button" onClick={() => {
                                                    const slots = [...(newTemplate.weeklySlots || [{ days: ['1'], time: '09:00' }])];
-                                                   slots[rowIdx] = { ...slots[rowIdx], days: ['1','2','3','4','5'] };
+                                                   slots[rowIdx] = { ...slots[rowIdx], days: ['1','2','3','4','5'].filter((d: string) => !usedDays.has(d)) };
                                                    setNewTemplate({...newTemplate, weeklySlots: slots});
                                                }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">工作日</button>
                                                <button type="button" onClick={() => {
                                                    const slots = [...(newTemplate.weeklySlots || [{ days: ['1'], time: '09:00' }])];
-                                                   slots[rowIdx] = { ...slots[rowIdx], days: ['6','7'] };
+                                                   slots[rowIdx] = { ...slots[rowIdx], days: ['6','7'].filter((d: string) => !usedDays.has(d)) };
                                                    setNewTemplate({...newTemplate, weeklySlots: slots});
                                                }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">周末</button>
                                                <button type="button" onClick={() => {
                                                    const slots = [...(newTemplate.weeklySlots || [{ days: ['1'], time: '09:00' }])];
-                                                   slots[rowIdx] = { ...slots[rowIdx], days: ['1','2','3','4','5','6','7'] };
+                                                   slots[rowIdx] = { ...slots[rowIdx], days: ['1','2','3','4','5','6','7'].filter((d: string) => !usedDays.has(d)) };
                                                    setNewTemplate({...newTemplate, weeklySlots: slots});
                                                }} className="text-xs px-1.5 py-0.5 bg-white rounded border hover:bg-gray-100">全选</button>
                                                <input type="time" value={slot.time || '09:00'}
