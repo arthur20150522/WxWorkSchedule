@@ -50,7 +50,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         setCanceling(true);
         try {
             const res = await axios.post('/api/tasks/cancel-pending');
-            showToast(`已紧急取消 ${res.data.count} 个任务`, 'success');
+            showToast(`一次性任务取消 ${res.data.cancelled} 个，周期任务已推到下次 ${res.data.rescheduled} 个`, 'success');
             fetchTasks();
         } catch (e: any) {
             showToast('取消失败: ' + (e.response?.data?.error || e.message), 'error');

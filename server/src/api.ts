@@ -8,6 +8,7 @@ import { authenticateToken, AuthRequest } from './authMiddleware.js';
 import { wxBridge } from './wxBridge.js';
 import { pushNotify } from './pushNotify.js';
 import { taskQueue } from './taskQueue.js';
+import { calculateNextTime } from './taskQueue.js';
 
 const app = express();
 app.use(cors());
@@ -370,18 +371,28 @@ apiRouter.delete('/tasks/batch-delete', async (req, res) => {
 apiRouter.post('/tasks/cancel-pending', async (_req, res) => {
   try {
     const db = await getDb();
-    let count = 0;
+    let cancelled = 0;
+    let rescheduled = 0;
     await db.update(({ tasks }) => {
       for (const t of tasks) {
         if (t.status === 'pending' || t.status === 'processing') {
-          t.status = 'failed';
-          t.error = t.error || '手动紧急取消';
-          count++;
+          if (t.recurrence && t.recurrence !== 'once') {
+            // Recurring: push to next time, don't fail
+            t.scheduleTime = calculateNextTime(t);
+            t.status = 'pending';
+            t.error = '手动清空队列 → 已推到下次';
+            rescheduled++;
+          } else {
+            // One-time: mark failed
+            t.status = 'failed';
+            t.error = t.error || '手动紧急取消';
+            cancelled++;
+          }
         }
       }
     });
-    await addLog('warn', `Emergency cancel: ${count} pending/processing tasks → failed`);
-    res.json({ success: true, count });
+    await addLog('warn', `Emergency cancel: ${cancelled} one-time tasks → failed, ${rescheduled} recurring → rescheduled`);
+    res.json({ success: true, cancelled, rescheduled });
   } catch (e) {
     handleError(res, e);
   }
