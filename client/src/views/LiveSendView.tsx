@@ -3,35 +3,24 @@ import { Send, Users, User, Clock, CheckCircle, XCircle, Loader2 } from 'lucide-
 import axios from 'axios';
 import clsx from 'clsx';
 import { t } from '../utils/i18n';
+import { LiveLog } from '../types';
 
-interface SendResult {
-  success: boolean;
-  duration: number;
-  error: string | null;
+interface Props {
+  liveLogs: LiveLog[];
+  fetchLiveLogs: () => void;
 }
 
-interface SendRecord {
-  id: string;
-  targetName: string;
-  targetType: 'group' | 'contact';
-  content: string;
-  time: string;
-  result: SendResult;
-}
-
-export function LiveSendView() {
+export function LiveSendView({ liveLogs, fetchLiveLogs }: Props) {
   const [targetName, setTargetName] = useState('');
   const [targetType, setTargetType] = useState<'group' | 'contact'>('group');
   const [content, setContent] = useState('');
   const [sending, setSending] = useState(false);
-  const [records, setRecords] = useState<SendRecord[]>([]);
   const latestRef = useRef<HTMLDivElement>(null);
 
   const handleSend = async () => {
     if (!targetName.trim() || !content.trim() || sending) return;
 
     setSending(true);
-    const startTime = new Date();
     try {
       const res = await axios.post('/api/send-live', {
         targetName: targetName.trim(),
@@ -39,34 +28,12 @@ export function LiveSendView() {
         content: content.trim(),
       });
 
-      const result: SendResult = {
-        success: res.data.success,
-        duration: res.data.duration,
-        error: res.data.error || null,
-      };
-
-      setRecords(prev => [{
-        id: Date.now().toString(),
-        targetName: targetName.trim(),
-        targetType,
-        content: content.trim(),
-        time: startTime.toLocaleTimeString(),
-        result,
-      }, ...prev]);
-
+      fetchLiveLogs();
       if (res.data.success) {
         setContent('');
       }
-    } catch (e) {
-      const error = axios.isAxiosError(e) ? e.response?.data?.error || e.message : (e as Error).message;
-      setRecords(prev => [{
-        id: Date.now().toString(),
-        targetName: targetName.trim(),
-        targetType,
-        content: content.trim(),
-        time: startTime.toLocaleTimeString(),
-        result: { success: false, duration: 0, error },
-      }, ...prev]);
+    } catch {
+      fetchLiveLogs();
     } finally {
       setSending(false);
       setTimeout(() => latestRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
@@ -150,30 +117,30 @@ export function LiveSendView() {
       {/* 发送记录 */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <h3 className="text-sm font-semibold text-gray-900 mb-3">{t.liveSendHistory}</h3>
-        {records.length === 0 ? (
+        {liveLogs.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-6">{t.liveSendNoHistory}</p>
         ) : (
           <div className="space-y-2">
-            {records.map((rec, i) => (
+            {liveLogs.map((rec, i) => (
               <div
                 key={rec.id}
                 ref={i === 0 ? latestRef : undefined}
                 className={clsx(
                   'flex items-start gap-3 p-3 rounded-lg border text-sm',
-                  rec.result.success
+                  rec.success
                     ? 'border-green-200 bg-green-50'
                     : 'border-red-200 bg-red-50'
                 )}
               >
                 <div className="mt-0.5">
-                  {rec.result.success
+                  {rec.success
                     ? <CheckCircle className="w-5 h-5 text-green-600" />
                     : <XCircle className="w-5 h-5 text-red-600" />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-gray-900 truncate">
-                      {rec.result.success ? t.liveSendSuccess : t.liveSendFailed}
+                      {rec.success ? t.liveSendSuccess : t.liveSendFailed}
                     </span>
                     <span className="text-gray-400">·</span>
                     <span className="text-gray-500">
@@ -183,10 +150,10 @@ export function LiveSendView() {
                   </div>
                   <p className="text-gray-600 mt-0.5 break-all line-clamp-2">{rec.content}</p>
                   <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
-                    <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{rec.time}</span>
-                    <span>{t.liveSendDuration} {rec.result.duration}{t.liveSendMs}</span>
-                    {rec.result.error && (
-                      <span className="text-red-500 truncate">{rec.result.error}</span>
+                    <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{new Date(rec.timestamp).toLocaleTimeString()}</span>
+                    <span>{t.liveSendDuration} {rec.duration}{t.liveSendMs}</span>
+                    {rec.error && (
+                      <span className="text-red-500 truncate">{rec.error}</span>
                     )}
                   </div>
                 </div>

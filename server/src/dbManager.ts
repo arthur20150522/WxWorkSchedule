@@ -2,9 +2,9 @@ import { JSONFilePreset } from 'lowdb/node';
 import { Low } from 'lowdb';
 import fs from 'fs';
 import path from 'path';
-import { Data, Task, Template, Contact, Log } from './types.js';
+import { Data, Task, Template, Contact, Log, LiveLog } from './types.js';
 
-export type { Task, Template, Contact, Log, Data };
+export type { Task, Template, Contact, Log, LiveLog, Data };
 
 const DB_PATH = path.resolve(process.cwd(), 'db.json');
 const MAX_LOG_ENTRIES = 500;
@@ -14,6 +14,7 @@ const defaultData: Data = {
   tasks: [],
   templates: [],
   logs: [],
+  liveLogs: [],
 };
 
 let dbInstance: Low<Data> | null = null;
@@ -30,6 +31,7 @@ export async function initDB(): Promise<Low<Data>> {
     if (!data.tasks) data.tasks = [];
     if (!data.templates) data.templates = [];
     if (!data.logs) data.logs = [];
+    if (!data.liveLogs) data.liveLogs = [];
 
     // Migration: string content → string[]
     data.tasks.forEach((t: any) => {
@@ -137,4 +139,25 @@ export async function addLog(
       logs.splice(0, logs.length - MAX_LOG_ENTRIES);
     }
   });
+}
+
+const MAX_LIVELOG_ENTRIES = 200;
+
+export async function addLiveLog(data: Omit<LiveLog, 'id' | 'timestamp'>): Promise<void> {
+  const db = await getDb();
+  await db.update(({ liveLogs }) => {
+    liveLogs.unshift({
+      id: Date.now().toString() + Math.random().toString(36).slice(2),
+      timestamp: new Date().toISOString(),
+      ...data,
+    });
+    if (liveLogs.length > MAX_LIVELOG_ENTRIES) {
+      liveLogs.splice(MAX_LIVELOG_ENTRIES);
+    }
+  });
+}
+
+export async function getLiveLogs(): Promise<LiveLog[]> {
+  const db = await getDb();
+  return db.data.liveLogs;
 }

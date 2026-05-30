@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { BotStatus, Contact, Task, Template } from './types';
+import { BotStatus, Contact, Task, Template, LiveLog } from './types';
 import { t } from './utils/i18n';
 import { useToast } from './hooks/useToast';
 import { useConfirmDialog } from './hooks/useConfirmDialog';
@@ -26,6 +26,7 @@ function App() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [liveLogs, setLiveLogs] = useState<LiveLog[]>([]);
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [token, setToken] = useState<string | null>(null);
@@ -103,6 +104,17 @@ function App() {
     }
   };
 
+  const fetchLiveLogs = async () => {
+    try {
+      const res = await axios.get('/api/live-logs');
+      if (Array.isArray(res.data)) {
+        setLiveLogs(res.data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch live-logs:', e);
+    }
+  };
+
   const handleLoginSuccess = (newToken: string, _username: string) => {
       setToken(newToken);
       setIsAuthenticated(true);
@@ -173,6 +185,10 @@ function App() {
     if (activeTab === 'contacts') {
         fetchContacts();
     }
+
+    if (activeTab === 'liveSend') {
+        fetchLiveLogs();
+    }
   }, [isAuthenticated, activeTab]);
 
   if (!isAuthenticated) {
@@ -218,7 +234,7 @@ function App() {
               />
           )}
           {activeTab === 'liveSend' && (
-              <LiveSendView />
+              <LiveSendView liveLogs={liveLogs} fetchLiveLogs={fetchLiveLogs} />
           )}
           {activeTab === 'templates' && (
               <TemplatesView

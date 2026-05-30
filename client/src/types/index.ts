@@ -1,3 +1,15 @@
+// ── LiveLog (实时发送记录) ──────────────────────────────
+export interface LiveLog {
+  id: string;
+  timestamp: string;
+  targetName: string;
+  targetType: 'group' | 'contact';
+  content: string;
+  success: boolean;
+  duration: number;
+  error?: string;
+}
+
 // ── Bot Status (API 返回) ────────────────────────────────
 export interface TaskStats {
   total: number;

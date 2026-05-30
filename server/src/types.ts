@@ -51,12 +51,25 @@ export interface Log {
   taskId?: string;
 }
 
+// ── LiveLog (实时发送记录) ───────────────────────────────
+export interface LiveLog {
+  id: string;
+  timestamp: string;
+  targetName: string;
+  targetType: 'group' | 'contact';
+  content: string;
+  success: boolean;
+  duration: number;  // ms
+  error?: string;
+}
+
 // ── Database Schema ─────────────────────────────────────
 export interface Data {
   contacts: Contact[];
   tasks: Task[];
   templates: Template[];
   logs: Log[];
+  liveLogs: LiveLog[];
 }
 
 // ── Bot Status (API 返回) ────────────────────────────────

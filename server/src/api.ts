@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import { BotManager } from './botManager.js';
-import { getDb, addLog, Task, Template, Contact } from './dbManager.js';
+import { getDb, addLog, addLiveLog, getLiveLogs, Task, Template, Contact } from './dbManager.js';
 import { verifyPassword, generateToken } from './auth.js';
 import { authenticateToken, AuthRequest } from './authMiddleware.js';
 import { wxBridge } from './wxBridge.js';
@@ -451,10 +451,12 @@ apiRouter.post('/send-live', async (req, res) => {
     return res.status(400).json({ success: false, error: 'targetType must be "group" or "contact"' });
   }
 
-  const startTime = Date.now();
+    const startTime = Date.now();
   try {
     const result = await wxBridge.send(targetName, content, targetType);
     const duration = Date.now() - startTime;
+
+    await addLiveLog({ targetName, targetType, content, success: result.success, duration, error: result.error || undefined });
 
     if (result.success) {
       await addLog('info', `Live send to [${targetType}] ${targetName}: success (${duration}ms)`);
@@ -466,8 +468,19 @@ apiRouter.post('/send-live', async (req, res) => {
   } catch (e) {
     const duration = Date.now() - startTime;
     const error = (e as Error).message;
+    await addLiveLog({ targetName, targetType, content, success: false, duration, error });
     await addLog('error', `Live send to [${targetType}] ${targetName}: exception — ${error}`);
     res.json({ success: false, duration, error });
+  }
+});
+
+// ── Live Logs ────────────────────────────────────────────
+apiRouter.get('/live-logs', async (_req, res) => {
+  try {
+    const logs = await getLiveLogs();
+    res.json(logs);
+  } catch (e) {
+    handleError(res, e);
   }
 });
 
