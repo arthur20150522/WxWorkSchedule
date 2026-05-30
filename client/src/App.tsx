@@ -163,6 +163,40 @@ function App() {
       }
   };
 
+  const handleBatchGenerate = async (selected: Template[], scheduleTime: string) => {
+      let count = 0;
+      try {
+          for (const template of selected) {
+              const targets = template.targets && template.targets.length > 0
+                  ? template.targets
+                  : [{ name: '', type: 'group' as const }];
+              for (const target of targets) {
+                  if (!target.name) continue;
+                  await axios.post('/api/tasks', {
+                      type: template.type,
+                      content: template.content,
+                      targetType: target.type,
+                      targetName: target.name,
+                      scheduleTime: new Date(scheduleTime).toISOString(),
+                      recurrence: template.recurrence || 'once',
+                      intervalValue: template.intervalValue,
+                      intervalUnit: template.intervalUnit,
+                      uiTime: template.uiTime,
+                      uiWeekday: template.uiWeekday,
+                      uiDayOfMonth: template.uiDayOfMonth,
+                      templateId: template.id,
+                  });
+                  count++;
+              }
+          }
+          showToast(`成功生成 ${count} 个任务`, 'success');
+          fetchTasks();
+          setActiveTab('tasks');
+      } catch (e) {
+          showToast(`生成任务失败 (已完成 ${count} 个)`, 'error');
+      }
+  };
+
   useEffect(() => {
     if (!isAuthenticated) return;
     fetchStatus();
@@ -243,6 +277,7 @@ function App() {
                   fetchTemplates={fetchTemplates}
                   showToast={showToast}
                   onGenerateTask={handleGenerateTask}
+                  onBatchGenerate={handleBatchGenerate}
                   contacts={contacts}
               />
           )}
