@@ -19,7 +19,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
 }) => {
     type TaskDraft = Partial<Task> & {
         uiTime: string;
-        uiWeekday: string;
+        uiWeekdays: string[];
         uiDayOfMonth: string;
         intervalValue: number;
         intervalUnit: 'minute' | 'hour' | 'day';
@@ -33,7 +33,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
       scheduleTime: '',
       recurrence: 'once',
       uiTime: '09:00',
-      uiWeekday: '1',
+      uiWeekdays: ['1'],
       uiDayOfMonth: '1',
       intervalValue: 30,
       intervalUnit: 'minute'
@@ -80,7 +80,14 @@ export const TasksView: React.FC<TasksViewProps> = ({
         const time = new Date(task.scheduleTime);
         const timeStr = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`;
         if (recurrence === 'daily') return `${t.daily} ${timeStr}`;
-        if (recurrence === 'weekly') return `${t.weekly} ${timeStr}`;
+        if (recurrence === 'weekly') {
+            const days = task.uiWeekdays || [];
+            const names = ['一','二','三','四','五','六','日'];
+            const dayStr = days.length > 0
+                ? days.map((d: string) => names[Number(d)-1]).join('、')
+                : '?';
+            return `周${dayStr} ${timeStr}`;
+        }
         if (recurrence === 'monthly') return `${t.monthly} ${timeStr}`;
         if (recurrence === 'interval') {
             return `${t.interval}: ${task.intervalValue}${getIntervalUnitLabel(task.intervalUnit)} ${timeStr}`;
@@ -124,12 +131,24 @@ export const TasksView: React.FC<TasksViewProps> = ({
             if (newTask.recurrence === 'daily') {
                 if (nextRun <= now) nextRun.setDate(nextRun.getDate() + 1);
             } else if (newTask.recurrence === 'weekly') {
-                const targetDay = parseInt(newTask.uiWeekday);
-                const jsTargetDay = targetDay === 7 ? 0 : targetDay;
-                const currentDay = nextRun.getDay();
-                let daysToAdd = (jsTargetDay - currentDay + 7) % 7;
-                if (daysToAdd === 0 && nextRun <= now) daysToAdd = 7;
-                nextRun.setDate(nextRun.getDate() + daysToAdd);
+                const weekdays = (newTask.uiWeekdays || ['1']).map(Number);
+                let found = false;
+                for (let d = 0; d < 7; d++) {
+                    const check = new Date(now);
+                    check.setDate(check.getDate() + d);
+                    const jsDay = check.getDay();
+                    const cnDay = jsDay === 0 ? 7 : jsDay;
+                    if (weekdays.includes(cnDay)) {
+                        const [h, m] = newTask.uiTime.split(':').map(Number);
+                        check.setHours(h, m, 0, 0);
+                        if (check > now || d > 0) {
+                            nextRun = check;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if (!found) nextRun.setDate(nextRun.getDate() + 7);
             } else if (newTask.recurrence === 'monthly') {
                 const targetDate = parseInt(newTask.uiDayOfMonth);
                 nextRun.setDate(targetDate);
@@ -208,11 +227,19 @@ export const TasksView: React.FC<TasksViewProps> = ({
                     if (tpl.recurrence === 'daily') {
                         if (next <= now) next.setDate(next.getDate() + 1);
                     } else if (tpl.recurrence === 'weekly') {
-                        const targetDay = parseInt(tpl.uiWeekday || '1');
-                        const jsTargetDay = targetDay === 7 ? 0 : targetDay;
-                        let daysToAdd = (jsTargetDay - now.getDay() + 7) % 7;
-                        if (daysToAdd === 0 && next <= now) daysToAdd = 7;
-                        next.setDate(now.getDate() + daysToAdd);
+                        const weekdays = (tpl.uiWeekdays || ['1']).map(Number);
+                        let found = false;
+                        for (let d = 0; d < 7; d++) {
+                            const check = new Date(now);
+                            check.setDate(check.getDate() + d);
+                            const jsDay = check.getDay();
+                            const cnDay = jsDay === 0 ? 7 : jsDay;
+                            if (weekdays.includes(cnDay)) {
+                                check.setHours(hours, minutes, 0, 0);
+                                if (check > now || d > 0) { next.setTime(check.getTime()); found = true; break; }
+                            }
+                        }
+                        if (!found) next.setDate(next.getDate() + 7);
                     } else if (tpl.recurrence === 'monthly') {
                         const targetDate = parseInt(tpl.uiDayOfMonth || '1');
                         next.setDate(targetDate);
@@ -233,7 +260,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                             intervalValue: tpl.intervalValue,
                             intervalUnit: tpl.intervalUnit,
                             uiTime: tpl.uiTime,
-                            uiWeekday: tpl.uiWeekday,
+                            uiWeekdays: tpl.uiWeekdays,
                             uiDayOfMonth: tpl.uiDayOfMonth,
                             templateId: tpl.id,
                         });
@@ -263,7 +290,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
             ...task,
             content: task.content.length > 0 ? task.content : [''],
             uiTime: `${hours}:${minutes}`,
-            uiWeekday: task.recurrence === 'weekly' ? (date.getDay() === 0 ? '7' : date.getDay().toString()) : '1',
+            uiWeekdays: task.uiWeekdays || (task.recurrence === 'weekly' ? [(date.getDay() === 0 ? '7' : date.getDay().toString())] : ['1']),
             uiDayOfMonth: date.getDate().toString(),
             intervalValue: task.intervalValue || 30,
             intervalUnit: task.intervalUnit || 'minute'
@@ -477,7 +504,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                         intervalValue: tpl.intervalValue ?? prev.intervalValue,
                                         intervalUnit: tpl.intervalUnit ?? prev.intervalUnit,
                                         uiTime: tpl.uiTime ?? prev.uiTime,
-                                        uiWeekday: tpl.uiWeekday ?? prev.uiWeekday,
+                                        uiWeekdays: tpl.uiWeekdays ?? prev.uiWeekdays,
                                         uiDayOfMonth: tpl.uiDayOfMonth ?? prev.uiDayOfMonth
                                     }));
                                     // 关联对象也自动带过来
@@ -700,32 +727,41 @@ export const TasksView: React.FC<TasksViewProps> = ({
                    )}
 
                    {newTask.recurrence === 'weekly' && (
-                       <div className="flex gap-2">
-                           <div className="flex-1">
-                               <label className="block text-sm font-medium text-gray-700 mb-1">{t.dayOfWeek}</label>
-                               <select
-                                 value={newTask.uiWeekday}
-                                 onChange={e => setNewTask({...newTask, uiWeekday: e.target.value})}
-                                 className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                               >
-                                   <option value="1">{t.monday}</option>
-                                   <option value="2">{t.tuesday}</option>
-                                   <option value="3">{t.wednesday}</option>
-                                   <option value="4">{t.thursday}</option>
-                                   <option value="5">{t.friday}</option>
-                                   <option value="6">{t.saturday}</option>
-                                   <option value="7">{t.sunday}</option>
-                               </select>
+                       <div>
+                           <label className="block text-sm font-medium text-gray-700 mb-1">{t.dayOfWeek}</label>
+                           <div className="flex flex-wrap gap-2 mb-2">
+                               {['1','2','3','4','5','6','7'].map(d => (
+                                   <label key={d} className="flex items-center gap-1 text-sm cursor-pointer">
+                                       <input
+                                           type="checkbox"
+                                           checked={(newTask.uiWeekdays || ['1']).includes(d)}
+                                           onChange={e => {
+                                               const days = newTask.uiWeekdays || ['1'];
+                                               setNewTask({...newTask, uiWeekdays: e.target.checked
+                                                   ? [...days, d].sort()
+                                                   : days.filter(x => x !== d)
+                                               });
+                                           }}
+                                           className="rounded text-green-600"
+                                       />
+                                       {['一','二','三','四','五','六','日'][Number(d)-1]}
+                                   </label>
+                               ))}
                            </div>
-                           <div className="flex-1">
-                               <label className="block text-sm font-medium text-gray-700 mb-1">{t.time}</label>
-                               <input
-                                 type="time"
-                                 value={newTask.uiTime}
-                                 onChange={e => setNewTask({...newTask, uiTime: e.target.value})}
-                                 className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                                 required
-                               />
+                           <div className="flex gap-2 items-center">
+                               <button type="button" onClick={() => setNewTask({...newTask, uiWeekdays: ['1','2','3','4','5']})} className="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">工作日</button>
+                               <button type="button" onClick={() => setNewTask({...newTask, uiWeekdays: ['6','7']})} className="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">周末</button>
+                               <button type="button" onClick={() => setNewTask({...newTask, uiWeekdays: ['1','2','3','4','5','6','7']})} className="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">全选</button>
+                               <label className="text-sm">
+                                   <span className="text-gray-500 mr-1">{t.time}</span>
+                                   <input
+                                     type="time"
+                                     value={newTask.uiTime}
+                                     onChange={e => setNewTask({...newTask, uiTime: e.target.value})}
+                                     className="p-1.5 border border-gray-300 rounded"
+                                     required
+                                   />
+                               </label>
                            </div>
                        </div>
                    )}

@@ -52,7 +52,7 @@ export interface Template {
   intervalValue?: number;
   intervalUnit?: 'minute' | 'hour' | 'day';
   uiTime?: string;
-  uiWeekday?: string;
+  uiWeekdays?: string[];
   uiDayOfMonth?: string;
   createdAt: string;
 }
@@ -74,7 +74,7 @@ export interface Task {
   intervalUnit?: 'minute' | 'hour' | 'day';
   // UI helper fields for TaskDraft
   uiTime?: string;
-  uiWeekday?: string;
+  uiWeekdays?: string[];
   uiDayOfMonth?: string;
 }
 

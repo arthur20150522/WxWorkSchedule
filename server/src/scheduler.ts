@@ -18,9 +18,22 @@ function advanceScheduleTime(task: any): string | null {
       case 'daily':
         next = addDays(next, 1);
         break;
-      case 'weekly':
-        next = addDays(next, 7);
+      case 'weekly': {
+        const weekdays = task.uiWeekdays?.map(Number) || [];
+        if (weekdays.length > 0) {
+          let found = false;
+          for (let d = 1; d <= 7; d++) {
+            const check = addDays(next, d);
+            const jsDay = check.getDay();
+            const cnDay = jsDay === 0 ? 7 : jsDay;
+            if (weekdays.includes(cnDay)) { next = check; found = true; break; }
+          }
+          if (!found) next = addDays(next, 7);
+        } else {
+          next = addDays(next, 7);
+        }
         break;
+      }
       case 'monthly':
         next = new Date(next.getFullYear(), next.getMonth() + 1, next.getDate());
         break;

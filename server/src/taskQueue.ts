@@ -15,7 +15,27 @@ export function calculateNextTime(task: Task): string {
 
   switch (task.recurrence) {
     case 'daily':    next = addDays(current, 1); break;
-    case 'weekly':   next = addWeeks(current, 1); break;
+    case 'weekly': {
+      const weekdays = task.uiWeekdays?.map(Number) || [];
+      if (weekdays.length === 0) {
+        next = addWeeks(current, 1);
+      } else {
+        // Find next matching weekday
+        let found = false;
+        for (let i = 1; i <= 7; i++) {
+          const check = addDays(current, i);
+          const jsDay = check.getDay(); // 0=Sun..6=Sat
+          const cnDay = jsDay === 0 ? 7 : jsDay; // 1=Mon..7=Sun
+          if (weekdays.includes(cnDay)) {
+            next = check;
+            found = true;
+            break;
+          }
+        }
+        if (!found) next = addWeeks(current, 1);
+      }
+      break;
+    }
     case 'monthly':  next = addMonths(current, 1); break;
     case 'interval': {
       const val = task.intervalValue || 1;
@@ -36,7 +56,22 @@ export function calculateNextTime(task: Task): string {
     iterations++;
     switch (task.recurrence) {
       case 'daily':    next = addDays(next, 1); break;
-      case 'weekly':   next = addWeeks(next, 1); break;
+      case 'weekly': {
+        const weekdays = task.uiWeekdays?.map(Number) || [];
+        if (weekdays.length > 0) {
+          let found = false;
+          for (let i = 1; i <= 7; i++) {
+            const check = addDays(next, i);
+            const jsDay = check.getDay();
+            const cnDay = jsDay === 0 ? 7 : jsDay;
+            if (weekdays.includes(cnDay)) { next = check; found = true; break; }
+          }
+          if (!found) next = addWeeks(next, 1);
+        } else {
+          next = addWeeks(next, 1);
+        }
+        break;
+      }
       case 'monthly':  next = addMonths(next, 1); break;
       case 'interval': {
         const val = task.intervalValue || 1;

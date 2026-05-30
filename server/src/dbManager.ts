@@ -37,15 +37,21 @@ export async function initDB(): Promise<Low<Data>> {
     data.tasks.forEach((t: any) => {
       if (typeof t.content === 'string') t.content = [t.content];
       if (typeof t.currentContentIndex === 'undefined') t.currentContentIndex = 0;
-      // Recovery: tasks stuck in 'processing' at startup → reset to pending
       if (t.status === 'processing') {
         console.log(`[DB] Recovering stuck task ${t.id} → pending`);
         t.status = 'pending';
+      }
+      // Migration: uiWeekday → uiWeekdays
+      if (t.uiWeekday && !t.uiWeekdays) {
+        t.uiWeekdays = [t.uiWeekday];
       }
     });
 
     data.templates.forEach((t: any) => {
       if (typeof t.content === 'string') t.content = [t.content];
+      if (t.uiWeekday && !t.uiWeekdays) {
+        t.uiWeekdays = [t.uiWeekday];
+      }
     });
 
     // Trim logs to prevent DB bloat

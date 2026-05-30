@@ -19,7 +19,7 @@ const getDefaultTemplate = (): Partial<Template> => ({
     targets: [],
     recurrence: 'once',
     uiTime: '09:00',
-    uiWeekday: '1',
+    uiWeekdays: ['1'],
     uiDayOfMonth: '1',
     intervalValue: 30,
     intervalUnit: 'minute'
@@ -277,32 +277,42 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                         )}
 
                         {newTemplate.recurrence === 'weekly' && (
-                           <div className="flex gap-2">
-                               <div className="flex-1">
-                                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.dayOfWeek}</label>
-                                   <select
-                                    value={newTemplate.uiWeekday ?? '1'}
-                                     onChange={e => setNewTemplate({...newTemplate, uiWeekday: e.target.value})}
-                                     className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
-                                   >
-                                       <option value="1">{t.monday}</option>
-                                       <option value="2">{t.tuesday}</option>
-                                       <option value="3">{t.wednesday}</option>
-                                       <option value="4">{t.thursday}</option>
-                                       <option value="5">{t.friday}</option>
-                                       <option value="6">{t.saturday}</option>
-                                       <option value="7">{t.sunday}</option>
-                                   </select>
+                           <div>
+                               <label className="block text-sm font-medium text-gray-700 mb-1">{t.dayOfWeek}</label>
+                               <div className="flex flex-wrap gap-2 mb-2">
+                                   {['1','2','3','4','5','6','7'].map(d => {
+                                       const days = newTemplate.uiWeekdays || ['1'];
+                                       return (
+                                           <label key={d} className="flex items-center gap-1 text-sm cursor-pointer">
+                                               <input
+                                                   type="checkbox"
+                                                   checked={days.includes(d)}
+                                                   onChange={e => {
+                                                       setNewTemplate({...newTemplate, uiWeekdays: e.target.checked
+                                                           ? [...days, d].sort()
+                                                           : days.filter(x => x !== d)
+                                                       });
+                                                   }}
+                                                   className="rounded text-green-600"
+                                               />
+                                               {['一','二','三','四','五','六','日'][Number(d)-1]}
+                                           </label>
+                                       );
+                                   })}
                                </div>
-                               <div className="flex-1">
-                                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.time}</label>
-                                   <input
-                                     type="time"
-                                    value={newTemplate.uiTime ?? '09:00'}
-                                     onChange={e => setNewTemplate({...newTemplate, uiTime: e.target.value})}
-                                     className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
-                                     required
-                                   />
+                               <div className="flex gap-2 items-center">
+                                   <button type="button" onClick={() => setNewTemplate({...newTemplate, uiWeekdays: ['1','2','3','4','5']})} className="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">工作日</button>
+                                   <button type="button" onClick={() => setNewTemplate({...newTemplate, uiWeekdays: ['6','7']})} className="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">周末</button>
+                                   <label className="text-sm">
+                                       <span className="text-gray-500 mr-1">{t.time}</span>
+                                       <input
+                                         type="time"
+                                        value={newTemplate.uiTime ?? '09:00'}
+                                         onChange={e => setNewTemplate({...newTemplate, uiTime: e.target.value})}
+                                         className="p-1.5 border border-gray-300 rounded"
+                                         required
+                                       />
+                                   </label>
                                </div>
                            </div>
                         )}

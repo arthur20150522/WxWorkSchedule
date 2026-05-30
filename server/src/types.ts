@@ -18,7 +18,7 @@ export interface Template {
   intervalValue?: number;
   intervalUnit?: 'minute' | 'hour' | 'day';
   uiTime?: string;
-  uiWeekday?: string;
+  uiWeekdays?: string[];  // Mon=1..Sun=7, multi-select
   uiDayOfMonth?: string;
   createdAt: string;
 }
@@ -36,6 +36,7 @@ export interface Task {
   recurrence: 'once' | 'daily' | 'weekly' | 'monthly' | 'interval';
   intervalValue?: number;
   intervalUnit?: 'minute' | 'hour' | 'day';
+  uiWeekdays?: string[];  // Mon=1..Sun=7, multi-select
   status: 'pending' | 'processing' | 'success' | 'failed';
   createdAt: string;
   updatedAt?: string;
