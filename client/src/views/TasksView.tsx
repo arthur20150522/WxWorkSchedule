@@ -59,6 +59,8 @@ export const TasksView: React.FC<TasksViewProps> = ({
     const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
     const [taskSearchQuery, setTaskSearchQuery] = useState('');
     const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'processing' | 'success' | 'failed'>('all');
+    const [sortBy, setSortBy] = useState<'time' | 'name'>('time');
+    const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
     const [selectedTargets, setSelectedTargets] = useState<{ type: 'group' | 'contact'; name: string }[]>([]);
     const [manualTarget, setManualTarget] = useState('');
     const [isBatchMode, setIsBatchMode] = useState(false);
@@ -314,7 +316,16 @@ export const TasksView: React.FC<TasksViewProps> = ({
       .filter(task =>
           task.content.some(c => c.toLowerCase().includes(taskSearchQuery.toLowerCase())) ||
           task.targetName.toLowerCase().includes(taskSearchQuery.toLowerCase())
-      );
+      )
+      .sort((a, b) => {
+          let cmp = 0;
+          if (sortBy === 'name') {
+              cmp = a.targetName.localeCompare(b.targetName, 'zh');
+          } else {
+              cmp = new Date(a.scheduleTime).getTime() - new Date(b.scheduleTime).getTime();
+          }
+          return sortDir === 'desc' ? -cmp : cmp;
+      });
 
     return (
           <div className="space-y-8">
@@ -790,6 +801,20 @@ export const TasksView: React.FC<TasksViewProps> = ({
                             <option value="processing">{t.processing}</option>
                             <option value="success">{t.success}</option>
                             <option value="failed">{t.failed}</option>
+                        </select>
+                        <select
+                            value={sortBy + '-' + sortDir}
+                            onChange={e => {
+                                const [s, d] = e.target.value.split('-');
+                                setSortBy(s as 'time' | 'name');
+                                setSortDir(d as 'asc' | 'desc');
+                            }}
+                            className="p-2 border border-gray-300 rounded text-sm"
+                        >
+                            <option value="time-asc">时间 ↑</option>
+                            <option value="time-desc">时间 ↓</option>
+                            <option value="name-asc">名称 A-Z</option>
+                            <option value="name-desc">名称 Z-A</option>
                         </select>
                         <button onClick={fetchTasks} className="p-2 hover:bg-gray-100 rounded-full">
                             <RefreshCw className="w-4 h-4 text-gray-500" />
