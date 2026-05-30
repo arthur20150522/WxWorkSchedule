@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { MessageSquare, Loader2, AlertCircle } from 'lucide-react';
 import { t } from '../utils/i18n';
@@ -11,8 +11,22 @@ interface LoginProps {
 export const Login: React.FC<LoginProps> = ({ onLoginSuccess, showToast }) => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
+    const [remember, setRemember] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+
+    // 加载记住的密码
+    useEffect(() => {
+        const saved = localStorage.getItem('wxschedule_creds');
+        if (saved) {
+            try {
+                const { u, p } = JSON.parse(saved);
+                setUsername(u || '');
+                setPassword(p || '');
+                setRemember(true);
+            } catch {}
+        }
+    }, []);
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -22,6 +36,11 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess, showToast }) => {
         try {
             const res = await axios.post('/api/login', { username, password });
             if (res.data.token) {
+                if (remember) {
+                    localStorage.setItem('wxschedule_creds', JSON.stringify({ u: username, p: password }));
+                } else {
+                    localStorage.removeItem('wxschedule_creds');
+                }
                 onLoginSuccess(res.data.token, username);
             } else {
                 setError('服务器返回异常，未收到 token');
@@ -95,6 +114,17 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess, showToast }) => {
                             placeholder={t.password}
                             disabled={loading}
                         />
+                    </div>
+
+                    <div className="flex items-center">
+                        <input
+                            type="checkbox"
+                            id="remember"
+                            checked={remember}
+                            onChange={e => setRemember(e.target.checked)}
+                            className="w-4 h-4 rounded border-gray-700 bg-gray-900/50 text-green-500 focus:ring-green-500 focus:ring-2 cursor-pointer"
+                        />
+                        <label htmlFor="remember" className="ml-2 text-sm text-gray-400 cursor-pointer select-none">记住密码</label>
                     </div>
 
                     <button
