@@ -17,7 +17,7 @@ export interface BotStatus {
   currentTarget?: string;
   lastError?: string;
   loginTime?: string;
-  taskStats: TaskStats;
+  taskStats?: TaskStats;
 }
 
 // ── Contact (通讯录) ──────────────────────────────────────

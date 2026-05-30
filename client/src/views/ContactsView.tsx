@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Plus, Search, Pencil, Trash2, X, Users, User, BookUser, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
 import { t } from '../utils/i18n';

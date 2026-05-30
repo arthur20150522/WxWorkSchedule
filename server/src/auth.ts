@@ -67,13 +67,13 @@ export async function verifyPassword(username: string, password: string): Promis
 
 /** Generate a JWT token (7-day expiry) */
 export function generateToken(username: string): string {
-  return jwt.sign({ username }, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ username }, JWT_SECRET as jwt.Secret, { expiresIn: '7d' });
 }
 
 /** Verify a JWT token — returns username or null */
 export function verifyToken(token: string): string | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { username: string };
+    const decoded = jwt.verify(token, JWT_SECRET as jwt.Secret) as unknown as { username: string };
     return decoded.username;
   } catch {
     return null;
