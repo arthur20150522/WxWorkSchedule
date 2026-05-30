@@ -9,9 +9,10 @@ Set-Location $BASE
 git fetch origin fork4win
 git reset --hard origin/fork4win
 
-Write-Host "2. Install server deps..." -ForegroundColor Cyan
+Write-Host "2. Install server deps + compile..." -ForegroundColor Cyan
 Set-Location "$BASE\server"
 npm install
+npx tsc
 
 Write-Host "3. Install client deps + build..." -ForegroundColor Cyan
 Set-Location "$BASE\client"
