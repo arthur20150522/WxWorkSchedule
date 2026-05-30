@@ -163,9 +163,25 @@ class TaskQueue {
         }
       } catch (retryErr: any) {
         this._lastError = `${retryErr.message}`;
-        await this.markFailed(task.id, this._lastError);
-        await addLog('error', `Task ${task.id}【${task.targetName}】失败(已重试): ${this._lastError}`, task.id);
-        pushNotify('消息发送失败', `[${task.targetType === 'group' ? '群' : '人'}] ${task.targetName}: ${this._lastError}`);
+
+        // Recurring tasks: skip this round, try next scheduled time
+        if (task.recurrence && task.recurrence !== 'once') {
+          const db2 = await getDb();
+          await db2.update(({ tasks }) => {
+            const t = tasks.find(x => x.id === task.id);
+            if (!t) return;
+            t.scheduleTime = calculateNextTime(t);
+            t.status = 'pending';
+            t.error = `上次失败: ${this._lastError}`;
+            console.log(`[TaskQueue] Recurring task ${t.id} failed → rescheduled to ${t.scheduleTime}`);
+          });
+          await addLog('warn', `Task ${task.id}【${task.targetName}】失败 → 已自动推到下次`, task.id);
+          pushNotify('消息发送失败', `[${task.targetType === 'group' ? '群' : '人'}] ${task.targetName}: ${this._lastError}（已自动推到下次）`);
+        } else {
+          await this.markFailed(task.id, this._lastError);
+          await addLog('error', `Task ${task.id}【${task.targetName}】失败(已重试): ${this._lastError}`, task.id);
+          pushNotify('消息发送失败', `[${task.targetType === 'group' ? '群' : '人'}] ${task.targetName}: ${this._lastError}`);
+        }
         return;
       }
     }
