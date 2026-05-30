@@ -158,6 +158,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </button>
             </div>
 
+            {/* 恢复失败任务 */}
+            <div className="bg-green-50 border-2 border-green-300 rounded-xl p-5">
+                <h3 className="font-bold text-green-800 text-sm mb-3 flex items-center gap-1">
+                    <RefreshCw className="w-4 h-4" />
+                    恢复周期任务
+                </h3>
+                <p className="text-green-600 text-xs mb-3 leading-relaxed">
+                    将所有“失败”状态的周期性任务（每天/每周/每月/间隔）重置为“待发送”，恢复其正常调度。
+                </p>
+                <button
+                    onClick={async () => {
+                        if (!confirm('确定要恢复所有失败状态的周期任务吗？')) return;
+                        try {
+                            const res = await axios.post('/api/tasks/recover-failed');
+                            showToast(`已恢复 ${res.data.count} 个周期任务`, 'success');
+                            fetchTasks();
+                        } catch (e: any) {
+                            showToast('恢复失败: ' + (e.response?.data?.error || e.message), 'error');
+                        }
+                    }}
+                    className="w-full py-2.5 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2"
+                >
+                    <RefreshCw className="w-4 h-4" />恢复失败周期任务
+                </button>
+            </div>
+
             {/* 风险提示 */}
             <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
                 <h3 className="font-bold text-orange-800 text-sm mb-1 flex items-center gap-1">

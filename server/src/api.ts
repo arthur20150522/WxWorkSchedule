@@ -398,6 +398,27 @@ apiRouter.post('/tasks/cancel-pending', async (_req, res) => {
   }
 });
 
+// Recover: reset failed recurring tasks to pending
+apiRouter.post('/tasks/recover-failed', async (_req, res) => {
+  try {
+    const db = await getDb();
+    let count = 0;
+    await db.update(({ tasks }) => {
+      for (const t of tasks) {
+        if (t.status === 'failed' && t.recurrence && t.recurrence !== 'once') {
+          t.status = 'pending';
+          t.error = undefined;
+          count++;
+        }
+      }
+    });
+    await addLog('info', `Recovered ${count} failed recurring tasks → pending`);
+    res.json({ success: true, count });
+  } catch (e) {
+    handleError(res, e);
+  }
+});
+
 apiRouter.delete('/tasks/:id', async (req, res) => {
   try {
     const db = await getDb();
