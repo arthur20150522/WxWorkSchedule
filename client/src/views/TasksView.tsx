@@ -65,6 +65,8 @@ export const TasksView: React.FC<TasksViewProps> = ({
     const [batchTemplateIds, setBatchTemplateIds] = useState<Set<string>>(new Set());
     const [batchTime, setBatchTime] = useState('');
     const [batchRecurrence, setBatchRecurrence] = useState<Task['recurrence']>('once');
+    const [batchTargets, setBatchTargets] = useState<{ type: 'group' | 'contact'; name: string }[]>([]);
+    const [batchManualTarget, setBatchManualTarget] = useState('');
 
     const getIntervalUnitLabel = (unit?: 'minute' | 'hour' | 'day') => {
         if (unit === 'hour') return t.hours;
@@ -173,6 +175,15 @@ export const TasksView: React.FC<TasksViewProps> = ({
             showToast('请选择至少一个模板', 'error');
             return;
         }
+
+        const targets = [...batchTargets];
+        if (batchManualTarget.trim()) {
+            targets.push({ type: 'group', name: batchManualTarget.trim() });
+        }
+        if (targets.length === 0) {
+            showToast('请选择至少一个发送对象', 'error');
+            return;
+        }
         if (!batchTime) {
             showToast('请选择发送时间', 'error');
             return;
@@ -184,8 +195,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
         try {
             for (const tpl of selectedTemplates) {
-                if (!tpl.targets || tpl.targets.length === 0) continue;
-                for (const target of tpl.targets) {
+                for (const target of targets) {
                     try {
                         await axios.post('/api/tasks', {
                             type: tpl.type,
@@ -210,6 +220,8 @@ export const TasksView: React.FC<TasksViewProps> = ({
             showToast(`批量生成完成: ${count} 成功${failed > 0 ? `，${failed} 失败` : ''}`, failed > 0 ? 'error' : 'success');
             await fetchTasks();
             setBatchTemplateIds(new Set());
+            setBatchTargets([]);
+            setBatchManualTarget('');
             setBatchTime('');
         } catch (e) {
             showToast('批量生成失败', 'error');
@@ -313,9 +325,9 @@ export const TasksView: React.FC<TasksViewProps> = ({
                 /* ===== Batch mode ===== */
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">选择模板（内容以模板为准，无需编辑）</label>
-                        <div className="max-h-48 overflow-y-auto border border-gray-300 rounded p-3 space-y-1">
-                            {templates.filter(t => t.targets && t.targets.length > 0).map(tpl => (
+                        <label className="block text-sm font-medium text-gray-700 mb-2">选择模板（多选）</label>
+                        <div className="max-h-40 overflow-y-auto border border-gray-300 rounded p-3 space-y-1">
+                            {templates.map(tpl => (
                                 <label key={tpl.id} className="flex items-center gap-2 p-1 hover:bg-gray-50 rounded cursor-pointer">
                                     <input
                                         type="checkbox"
@@ -330,19 +342,70 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                         className="rounded text-blue-600 focus:ring-blue-500"
                                     />
                                     <span className="text-sm flex-1">{tpl.name}</span>
-                                    <span className="text-xs text-gray-400">{tpl.targets?.length || 0} 个目标</span>
+                                    <span className="text-xs text-gray-400">{Array.isArray(tpl.content) ? tpl.content.length : 1} 条内容</span>
                                 </label>
                             ))}
-                            {templates.filter(t => t.targets && t.targets.length > 0).length === 0 && (
-                                <p className="text-sm text-gray-400 text-center py-4">暂无可用的模板（需要模板有关联对象），请先在"模板管理"中设置</p>
+                            {templates.length === 0 && (
+                                <p className="text-sm text-gray-400 text-center py-4">暂无模板，请先在"模板管理"中创建</p>
                             )}
                         </div>
-                        {templates.filter(t => t.targets && t.targets.length > 0).length > 0 && (
+                        {templates.length > 0 && (
                             <div className="flex gap-1 mt-1">
-                                <button type="button" onClick={() => setBatchTemplateIds(new Set(templates.filter(t => t.targets?.length).map(t => t.id)))} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200">全选</button>
+                                <button type="button" onClick={() => setBatchTemplateIds(new Set(templates.map(t => t.id)))} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200">全选</button>
                                 <button type="button" onClick={() => setBatchTemplateIds(new Set())} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200">清空</button>
                             </div>
                         )}
+                    </div>
+
+                    {/* Contacts picker (same as single mode) */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{t.selectTargets}</label>
+                        <div className="max-h-40 overflow-y-auto border border-gray-300 rounded p-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {contacts.map(c => (
+                                <label key={c.id} className="flex items-center space-x-2 p-1 hover:bg-gray-50 rounded cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={batchTargets.some(st => st.name === c.name)}
+                                        onChange={e => {
+                                            const target = { type: c.type, name: c.name };
+                                            setBatchTargets(prev =>
+                                                e.target.checked
+                                                    ? [...prev, target]
+                                                    : prev.filter(st => st.name !== c.name)
+                                            );
+                                        }}
+                                        className="rounded text-green-600 focus:ring-green-500"
+                                    />
+                                    <span className="text-sm truncate">{c.name}</span>
+                                    <span className={clsx(
+                                        "text-xs px-1.5 py-0.5 rounded-full",
+                                        c.type === 'group' ? "bg-blue-50 text-blue-600" : "bg-green-50 text-green-600"
+                                    )}>
+                                        {c.type === 'group' ? t.group : t.contact}
+                                    </span>
+                                </label>
+                            ))}
+                        </div>
+                        {contacts.length > 0 && (
+                            <div className="flex gap-1 mt-1">
+                                <button type="button" onClick={() => setBatchTargets(contacts.map(c => ({ type: c.type, name: c.name })))} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600">全选</button>
+                                <button type="button" onClick={() => {
+                                    const all = contacts.map(c => ({ type: c.type, name: c.name }));
+                                    setBatchTargets(all.filter(a => !batchTargets.some(s => s.name === a.name)));
+                                }} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600">反选</button>
+                                <button type="button" onClick={() => setBatchTargets([])} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600">清空</button>
+                                <span className="text-xs text-gray-400 ml-1 self-center">已选 {batchTargets.length} 个</span>
+                            </div>
+                        )}
+                        <div className="mt-2 flex gap-2 items-center">
+                            <input
+                                type="text"
+                                value={batchManualTarget}
+                                onChange={e => setBatchManualTarget(e.target.value)}
+                                className="flex-1 p-2 border border-gray-300 rounded text-sm"
+                                placeholder="或手动输入目标名称"
+                            />
+                        </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -364,7 +427,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                     <button
                         type="button"
                         onClick={batchCreateTasks}
-                        disabled={batchTemplateIds.size === 0 || !batchTime}
+                        disabled={batchTemplateIds.size === 0 || batchTargets.length === 0 || !batchTime}
                         className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold transition disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <Send className="w-5 h-5" /> 批量生成任务
