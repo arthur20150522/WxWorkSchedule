@@ -310,6 +310,30 @@ export const TasksView: React.FC<TasksViewProps> = ({
                         </div>
                     )}
                   </div>
+                  {contacts.length > 0 && (
+                    <div className="flex gap-1 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTargets(contacts.map(c => ({ type: c.type, name: c.name })))}
+                        className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600"
+                      >全选</button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const all = contacts.map(c => ({ type: c.type, name: c.name }));
+                          const inverted = all.filter(a => !selectedTargets.some(s => s.name === a.name));
+                          setSelectedTargets(inverted);
+                        }}
+                        className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600"
+                      >反选</button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTargets([])}
+                        className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600"
+                      >清空</button>
+                      <span className="text-xs text-gray-400 ml-1 self-center">已选 {selectedTargets.length} 个</span>
+                    </div>
+                  )}
                   <div className="mt-2 flex gap-2 items-center">
                       <input
                           type="text"
