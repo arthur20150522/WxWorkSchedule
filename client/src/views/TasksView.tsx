@@ -73,12 +73,15 @@ export const TasksView: React.FC<TasksViewProps> = ({
         return t.minutes;
     };
 
-    const getRecurrenceLabel = (recurrence?: Task['recurrence'], intervalValue?: number, intervalUnit?: Task['intervalUnit']) => {
-        if (recurrence === 'daily') return t.daily;
-        if (recurrence === 'weekly') return t.weekly;
-        if (recurrence === 'monthly') return t.monthly;
+    const getRecurrenceLabel = (task: Task) => {
+        const recurrence = task.recurrence;
+        const time = new Date(task.scheduleTime);
+        const timeStr = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`;
+        if (recurrence === 'daily') return `${t.daily} ${timeStr}`;
+        if (recurrence === 'weekly') return `${t.weekly} ${timeStr}`;
+        if (recurrence === 'monthly') return `${t.monthly} ${timeStr}`;
         if (recurrence === 'interval') {
-            return `${t.interval}: ${intervalValue}${getIntervalUnitLabel(intervalUnit)}`;
+            return `${t.interval}: ${task.intervalValue}${getIntervalUnitLabel(task.intervalUnit)} ${timeStr}`;
         }
         return t.once;
     };
@@ -190,10 +193,32 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
         let count = 0;
         let failed = 0;
-        const scheduleTime = new Date(batchTime).toISOString();
 
         try {
             for (const tpl of selectedTemplates) {
+                // 根据模板的周期设置计算正确的首次发送时间
+                const now = new Date();
+                let taskScheduleTime = new Date(batchTime).toISOString();
+                if (tpl.recurrence && tpl.recurrence !== 'once') {
+                    const [hours, minutes] = (tpl.uiTime || '09:00').split(':').map(Number);
+                    const next = new Date();
+                    next.setHours(hours, minutes, 0, 0);
+                    if (tpl.recurrence === 'daily') {
+                        if (next <= now) next.setDate(next.getDate() + 1);
+                    } else if (tpl.recurrence === 'weekly') {
+                        const targetDay = parseInt(tpl.uiWeekday || '1');
+                        const jsTargetDay = targetDay === 7 ? 0 : targetDay;
+                        let daysToAdd = (jsTargetDay - now.getDay() + 7) % 7;
+                        if (daysToAdd === 0 && next <= now) daysToAdd = 7;
+                        next.setDate(now.getDate() + daysToAdd);
+                    } else if (tpl.recurrence === 'monthly') {
+                        const targetDate = parseInt(tpl.uiDayOfMonth || '1');
+                        next.setDate(targetDate);
+                        if (next <= now) next.setMonth(next.getMonth() + 1);
+                    }
+                    taskScheduleTime = next.toISOString();
+                }
+
                 for (const target of targets) {
                     try {
                         await axios.post('/api/tasks', {
@@ -201,7 +226,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                             content: tpl.content,
                             targetType: target.type,
                             targetName: target.name,
-                            scheduleTime,
+                            scheduleTime: taskScheduleTime,
                             recurrence: tpl.recurrence || 'once',
                             intervalValue: tpl.intervalValue,
                             intervalUnit: tpl.intervalUnit,
@@ -829,9 +854,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                     <td className="p-4">{new Date(task.scheduleTime).toLocaleString()}</td>
                                     <td className="p-4">
                                         <span className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-700">
-                                            {task.recurrence === 'interval'
-                                                ? `${t.interval}: ${task.intervalValue}${getIntervalUnitLabel(task.intervalUnit)}`
-                                                : getRecurrenceLabel(task.recurrence)}
+                                            {getRecurrenceLabel(task)}
                                         </span>
                                     </td>
                                     <td className="p-4">
@@ -946,9 +969,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
                             <div className="flex justify-between items-center pt-2 border-t border-gray-100">
                                 <span className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-600">
-                                    {task.recurrence === 'interval'
-                                        ? `${t.interval}: ${task.intervalValue}${getIntervalUnitLabel(task.intervalUnit)}`
-                                        : getRecurrenceLabel(task.recurrence)}
+                                    {getRecurrenceLabel(task)}
                                 </span>
                                 <div className="flex gap-3">
                                     <button onClick={() => editTask(task)} className="p-2 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100">
