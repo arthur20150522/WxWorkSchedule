@@ -441,5 +441,35 @@ apiRouter.post('/data/import', async (req, res) => {
   }
 });
 
+// ── Live Send ────────────────────────────────────────────
+apiRouter.post('/send-live', async (req, res) => {
+  const { targetName, targetType, content } = req.body;
+  if (!targetName || !targetType || !content) {
+    return res.status(400).json({ success: false, error: 'targetName, targetType, and content are required' });
+  }
+  if (!['group', 'contact'].includes(targetType)) {
+    return res.status(400).json({ success: false, error: 'targetType must be "group" or "contact"' });
+  }
+
+  const startTime = Date.now();
+  try {
+    const result = await wxBridge.send(targetName, content, targetType);
+    const duration = Date.now() - startTime;
+
+    if (result.success) {
+      await addLog('info', `Live send to [${targetType}] ${targetName}: success (${duration}ms)`);
+    } else {
+      await addLog('error', `Live send to [${targetType}] ${targetName}: failed — ${result.error || 'unknown'}`);
+    }
+
+    res.json({ success: result.success, duration, error: result.error || null });
+  } catch (e) {
+    const duration = Date.now() - startTime;
+    const error = (e as Error).message;
+    await addLog('error', `Live send to [${targetType}] ${targetName}: exception — ${error}`);
+    res.json({ success: false, duration, error });
+  }
+});
+
 app.use('/api', apiRouter);
 export { app };

@@ -12,11 +12,12 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 
 import { DashboardView } from './views/DashboardView';
 import { ContactsView } from './views/ContactsView';
+import { LiveSendView } from './views/LiveSendView';
 import { TemplatesView } from './views/TemplatesView';
 import { TasksView } from './views/TasksView';
 import { LogsView } from './views/LogsView';
 
-type TabId = 'dashboard' | 'contacts' | 'templates' | 'tasks' | 'logs';
+type TabId = 'dashboard' | 'contacts' | 'liveSend' | 'templates' | 'tasks' | 'logs';
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
@@ -187,6 +188,7 @@ function App() {
             <h2 className="text-xl font-bold text-gray-800">
                 {activeTab === 'dashboard' && t.dashboard}
                 {activeTab === 'contacts' && t.contacts}
+                {activeTab === 'liveSend' && t.liveSend}
                 {activeTab === 'templates' && t.templates}
                 {activeTab === 'tasks' && t.tasks}
                 {activeTab === 'logs' && t.logs}
@@ -214,6 +216,9 @@ function App() {
                   fetchContacts={fetchContacts}
                   showToast={showToast}
               />
+          )}
+          {activeTab === 'liveSend' && (
+              <LiveSendView />
           )}
           {activeTab === 'templates' && (
               <TemplatesView

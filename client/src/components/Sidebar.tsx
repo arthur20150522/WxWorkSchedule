@@ -1,9 +1,9 @@
 import React from 'react';
-import { QrCode, BookUser, MessageSquare, List, FileText, Layout } from 'lucide-react';
+import { QrCode, BookUser, MessageSquare, List, FileText, Layout, Send } from 'lucide-react';
 import clsx from 'clsx';
 import { t } from '../utils/i18n';
 
-type TabId = 'dashboard' | 'contacts' | 'templates' | 'tasks' | 'logs';
+type TabId = 'dashboard' | 'contacts' | 'liveSend' | 'templates' | 'tasks' | 'logs';
 
 interface SidebarProps {
     activeTab: TabId;
@@ -14,6 +14,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
     const menuItems = [
         { id: 'dashboard', label: t.dashboard, icon: QrCode },
         { id: 'contacts', label: t.contacts, icon: BookUser },
+        { id: 'liveSend', label: t.liveSend, icon: Send },
         { id: 'templates', label: t.templates, icon: Layout },
         { id: 'tasks', label: t.tasks, icon: List },
         { id: 'logs', label: t.logs, icon: FileText },
