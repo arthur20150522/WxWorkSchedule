@@ -29,7 +29,13 @@ export function calculateNextTime(task: Task): string {
             const jsTarget = cnDay === 7 ? 0 : cnDay;
             const todayJs = current.getDay();
             let diff = jsTarget - todayJs;
-            if (diff <= 0) diff += 7;
+            if (diff < 0) diff += 7;
+            // Same day: check if time already passed
+            if (diff === 0) {
+              const probe = new Date(current);
+              probe.setHours(h || 9, m || 0, 0, 0);
+              if (probe <= current) diff = 7;
+            }
             const candidate = new Date(current);
             candidate.setDate(candidate.getDate() + diff);
             candidate.setHours(h || 9, m || 0, 0, 0);
@@ -74,7 +80,12 @@ export function calculateNextTime(task: Task): string {
               const jsTarget = cnDay === 7 ? 0 : cnDay;
               const todayJs = next.getDay();
               let diff = jsTarget - todayJs;
-              if (diff <= 0) diff += 7;
+              if (diff < 0) diff += 7;
+              if (diff === 0) {
+                const probe = new Date(next);
+                probe.setHours(h || 9, m || 0, 0, 0);
+                if (probe <= next) diff = 7;
+              }
               const candidate = new Date(next);
               candidate.setDate(candidate.getDate() + diff);
               candidate.setHours(h || 9, m || 0, 0, 0);

@@ -140,7 +140,13 @@ export const TasksView: React.FC<TasksViewProps> = ({
                         const cnDay = Number(d);
                         const jsTarget = cnDay === 7 ? 0 : cnDay;
                         let diff = jsTarget - now.getDay();
-                        if (diff <= 0) diff += 7;
+                        if (diff < 0) diff += 7;
+                        // Same day: check if time already passed
+                        if (diff === 0) {
+                            const probe = new Date();
+                            probe.setHours(h || 9, m || 0, 0, 0);
+                            if (probe <= now) diff = 7;
+                        }
                         const candidate = new Date();
                         candidate.setDate(candidate.getDate() + diff);
                         candidate.setHours(h || 9, m || 0, 0, 0);
@@ -238,7 +244,12 @@ export const TasksView: React.FC<TasksViewProps> = ({
                                 const cnDay = Number(d);
                                 const jsTarget = cnDay === 7 ? 0 : cnDay;
                                 let diff = jsTarget - now.getDay();
-                                if (diff <= 0) diff += 7;
+                                if (diff < 0) diff += 7;
+                                if (diff === 0) {
+                                    const probe = new Date();
+                                    probe.setHours(h, m, 0, 0);
+                                    if (probe <= now) diff = 7;
+                                }
                                 const candidate = new Date();
                                 candidate.setDate(candidate.getDate() + diff);
                                 candidate.setHours(h, m, 0, 0);
