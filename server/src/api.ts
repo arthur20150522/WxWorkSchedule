@@ -272,9 +272,27 @@ apiRouter.get('/tasks', async (_req, res) => {
 apiRouter.post('/tasks', async (req, res) => {
   try {
     const db = await getDb();
+
+    // 计算 scheduleTime：优先用请求中的，否则从 uiTime + recurrence 推算
+    let scheduleTime = req.body.scheduleTime;
+    if (!scheduleTime || isNaN(new Date(scheduleTime).getTime())) {
+        const recurrence = req.body.recurrence || 'once';
+        if (recurrence === 'once') {
+            return res.status(400).json({ error: 'scheduleTime is required for one-time tasks' });
+        }
+        // 从 uiTime 推算首次执行时间
+        const now = new Date();
+        const [h, m] = (req.body.uiTime || '09:00').split(':').map(Number);
+        const next = new Date();
+        next.setHours(h || 9, m || 0, 0, 0);
+        if (next <= now) next.setDate(next.getDate() + 1);
+        scheduleTime = next.toISOString();
+    }
+
     const task: Task = {
       id: Date.now().toString(),
       ...req.body,
+      scheduleTime,
       recurrence: req.body.recurrence || 'once',
       status: 'pending',
       currentContentIndex: 0,

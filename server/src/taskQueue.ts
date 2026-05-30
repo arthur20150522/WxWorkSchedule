@@ -28,9 +28,11 @@ export function calculateNextTime(task: Task): string {
     default: return current.toISOString();
   }
 
-  // Skip past times for recurring tasks
+  // Skip past times for recurring tasks (max 1000 iterations to prevent infinite loop)
   const now = new Date();
-  while (next <= now) {
+  let iterations = 0;
+  while (next <= now && iterations < 1000) {
+    iterations++;
     switch (task.recurrence) {
       case 'daily':    next = addDays(next, 1); break;
       case 'weekly':   next = addWeeks(next, 1); break;
@@ -41,6 +43,7 @@ export function calculateNextTime(task: Task): string {
           case 'minute': next = addMinutes(next, val); break;
           case 'hour':   next = addHours(next, val); break;
           case 'day':    next = addDays(next, val); break;
+          default:       next = addDays(next, 1); break; // safety fallback
         }
         break;
       }
@@ -61,9 +64,21 @@ class TaskQueue {
   get currentTarget(): string | null { return this._currentTarget; }
   get lastError(): string | null { return this._lastError; }
 
-  add(task: Task) {
+  async add(task: Task) {
     // Deduplicate: skip if already in queue
     if (this.queue.find(t => t.id === task.id)) return;
+
+    // Immediately mark processing in DB to prevent scheduler re-pickup
+    try {
+      const db = await getDb();
+      await db.update(({ tasks }) => {
+        const t = tasks.find(x => x.id === task.id);
+        if (t && t.status === 'pending') t.status = 'processing';
+      });
+    } catch (e) {
+      console.error(`[TaskQueue] Failed to mark task ${task.id} processing:`, e);
+    }
+
     console.log(`[TaskQueue] Enqueue task ${task.id} → ${task.targetName}`);
     this.queue.push(task);
     this.process();
@@ -105,7 +120,14 @@ class TaskQueue {
       if (t) t.status = 'processing';
     });
 
-    const currentIndex = task.currentContentIndex || 0;
+    // Read currentContentIndex from DB (not snapshot) to avoid stale data
+    let currentIndex = task.currentContentIndex || 0;
+    try {
+      const dbFresh = await getDb();
+      const fresh = dbFresh.data.tasks.find(t => t.id === task.id);
+      if (fresh) currentIndex = fresh.currentContentIndex || 0;
+    } catch { /* use snapshot value as fallback */ }
+
     const contentToSend = task.content[currentIndex];
 
     if (!contentToSend) {

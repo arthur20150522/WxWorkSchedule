@@ -32,9 +32,11 @@ interface ContactInfo {
 
 async function fetchBridge(path: string, options?: RequestInit): Promise<any> {
   const url = `${BRIDGE_URL}${path}`;
+  const timeout = options?.signal ? undefined : AbortSignal.timeout(30000);
   try {
     const resp = await fetch(url, {
       ...options,
+      signal: timeout || options?.signal,
       headers: { 'Content-Type': 'application/json', ...options?.headers },
     });
     if (!resp.ok) {
@@ -43,6 +45,9 @@ async function fetchBridge(path: string, options?: RequestInit): Promise<any> {
     }
     return await resp.json();
   } catch (e: any) {
+    if (e.name === 'AbortError' || e.name === 'TimeoutError') {
+      throw new Error('wx4py bridge request timeout (30s)');
+    }
     if (e.cause?.code === 'ECONNREFUSED') {
       throw new Error('wx4py bridge is not running. Start it with: python bridge.py');
     }
