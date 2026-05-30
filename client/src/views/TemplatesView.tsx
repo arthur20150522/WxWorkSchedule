@@ -78,12 +78,21 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
         return t.minutes;
     };
 
-    const getRecurrenceLabel = (recurrence?: Template['recurrence'], intervalValue?: number, intervalUnit?: Template['intervalUnit']) => {
+    const getRecurrenceLabel = (tpl: Template) => {
+        const recurrence = tpl.recurrence;
         if (recurrence === 'daily') return t.daily;
-        if (recurrence === 'weekly') return t.weekly;
+        if (recurrence === 'weekly') {
+            const slots = tpl.weeklySlots || [];
+            const names = ['一','二','三','四','五','六','日'];
+            const parts = slots.map(s => {
+                const dayStr = (s.days || []).map((d: string) => names[Number(d)-1]).join('');
+                return `周${dayStr} ${s.time}`;
+            });
+            return parts.join(', ') || t.weekly;
+        }
         if (recurrence === 'monthly') return t.monthly;
         if (recurrence === 'interval') {
-            return `${t.interval}: ${intervalValue}${getIntervalUnitLabel(intervalUnit)}`;
+            return `${t.interval}: ${tpl.intervalValue}${getIntervalUnitLabel(tpl.intervalUnit)}`;
         }
         return t.once;
     };
@@ -435,9 +444,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                 <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
                                     <span className="bg-gray-100 px-2 py-1 rounded">{tpl.type}</span>
                                     <span className="bg-blue-50 px-2 py-1 rounded text-blue-600">
-                                        {tpl.recurrence === 'interval'
-                                            ? `${t.interval}: ${tpl.intervalValue}${getIntervalUnitLabel(tpl.intervalUnit)}`
-                                            : getRecurrenceLabel(tpl.recurrence)}
+                                        {getRecurrenceLabel(tpl)}
                                     </span>
                                     {tpl.recurrence !== 'interval' && tpl.uiTime && (
                                         <span className="bg-cyan-50 px-2 py-1 rounded text-cyan-700">

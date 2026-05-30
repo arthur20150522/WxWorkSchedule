@@ -159,10 +159,14 @@ export const TasksView: React.FC<TasksViewProps> = ({
         }
 
         try {
+            // Filter out empty weekly slots before saving
+            const slots = (newTask.weeklySlots || []).filter(s => (s.days || []).length > 0);
+            const cleanTask = { ...newTask, weeklySlots: slots.length > 0 ? slots : undefined };
+
             if (isEditing && newTask.id) {
                 const target = targets[0];
                 await axios.put(`/api/tasks/${newTask.id}`, {
-                    ...newTask,
+                    ...cleanTask,
                     content: contentArray,
                     scheduleTime: finalScheduleTime,
                     targetType: target.type,
@@ -173,7 +177,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                 let count = 0;
                 for (const target of targets) {
                     await axios.post('/api/tasks', {
-                        ...newTask,
+                        ...cleanTask,
                         content: contentArray,
                         scheduleTime: finalScheduleTime,
                         targetType: target.type,
