@@ -446,7 +446,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                                     <span className="bg-blue-50 px-2 py-1 rounded text-blue-600">
                                         {getRecurrenceLabel(tpl)}
                                     </span>
-                                    {tpl.recurrence !== 'interval' && tpl.uiTime && (
+                                    {tpl.recurrence !== 'interval' && tpl.recurrence !== 'weekly' && tpl.uiTime && (
                                         <span className="bg-cyan-50 px-2 py-1 rounded text-cyan-700">
                                             {tpl.uiTime}
                                         </span>
