@@ -29,6 +29,7 @@ export interface TaskStats {
 
 export interface BotStatus {
   online: boolean;
+  bridgeState?: string;  // 'ok' | 'popup' | 'login' | 'waiting' | 'loading' | 'unknown' | 'fatal'
   queueLength: number;
   currentTarget?: string;
   lastError?: string;

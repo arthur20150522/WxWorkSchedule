@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RefreshCw, CheckCircle, XCircle, Loader2, AlertTriangle, BarChart3, ShieldOff } from 'lucide-react';
+import { RefreshCw, CheckCircle, XCircle, Loader2, AlertTriangle, BarChart3, ShieldOff, LogIn } from 'lucide-react';
 import clsx from 'clsx';
 import { t } from '../utils/i18n';
 import { BotStatus, TaskStats } from '../types';
@@ -43,7 +43,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     botStatus, isStatusLoading, fetchTasks, showToast
 }) => {
     const [canceling, setCanceling] = useState(false);
+    const [isRecovering, setIsRecovering] = useState(false);
     const hasQueue = botStatus.queueLength > 0;
+
+    const handleAutoLogin = async () => {
+        setIsRecovering(true);
+        try {
+            const res = await axios.post('/api/bridge/recover');
+            showToast(res.data?.message || '恢复已触发，等待微信响应...', 'info');
+        } catch (e: any) {
+            showToast('恢复失败: ' + (e.response?.data?.error || e.message), 'error');
+        } finally {
+            setIsRecovering(false);
+        }
+    };
 
     const handleEmergencyCancel = async () => {
         if (!confirm('确定要紧急取消所有待发送和处理中的任务吗？\n\n此操作会将这些任务标记为失败，不会删除它们。')) return;
@@ -81,8 +94,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </div>
 
                         {!botStatus.online && (
-                            <div className="mt-4 text-gray-500 text-sm">
-                                {t.wx4pyNotConnected}
+                            <div className="mt-4 space-y-3">
+                                <p className="text-gray-500 text-sm">
+                                    {botStatus.bridgeState === 'popup' ? '检测到"已退出"弹窗' :
+                                     botStatus.bridgeState === 'login' ? '微信在登录页' :
+                                     botStatus.bridgeState === 'waiting' ? '等待手机确认登录' :
+                                     t.wx4pyNotConnected}
+                                </p>
+                                <button
+                                    onClick={handleAutoLogin}
+                                    disabled={isRecovering}
+                                    className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-lg text-sm font-medium transition-colors"
+                                >
+                                    {isRecovering ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                        <LogIn className="w-4 h-4" />
+                                    )}
+                                    {isRecovering ? '恢复中...' : '尝试登录'}
+                                </button>
                             </div>
                         )}
                     </>
