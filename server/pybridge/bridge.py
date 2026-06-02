@@ -19,10 +19,14 @@ _wx = None
 
 def get_wx():
     global _wx
-    if _wx is None or not _wx.is_connected:
+    if _wx is None:
         from wx4py import WeChatClient
         log.info('Connecting to WeChat window...')
-        _wx = WeChatClient(auto_connect=True)
+        _wx = WeChatClient(auto_connect=False)
+        try:
+            _wx.connect()
+        except Exception as e:
+            log.error(f'WeChat connect failed: {e}')
         log.info(f'Connected: {_wx.is_connected}')
     return _wx
 
@@ -261,8 +265,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return ('fatal', str(e))
     
     def _get_wechat_hwnd(self):
-        """Get WeChat window HWND. Use win32gui first (works across sessions), then uiautomation."""
-        # Strategy 1: win32gui EnumWindows (works even in session 0)
+        """Get WeChat window HWND via win32gui only (no COM, works cross-session)."""
         import win32gui, ctypes
         result = [0]
         def cb(h, _):
@@ -272,16 +275,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return True
         CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
         ctypes.windll.user32.EnumWindows(CB(cb), 0)
-        if result[0]:
-            return result[0]
-        # Strategy 2: wx4py uiautomation (only works in console session)
-        try:
-            wx = get_wx()
-            if wx.is_connected:
-                return wx._window.hwnd
-        except:
-            pass
-        return 0
+        return result[0] or 0
     
     def _handle_status(self):
         try:
