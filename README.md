@@ -1,209 +1,123 @@
-# WxSchedule（微信机器人定时发送管理系统）
+# WxWorkSchedule — 微信定时消息机器人
 
-一个基于 wx4py (Windows UI Automation) 的微信机器人 + Web 管理后台，用于管理群组/联系人，并创建”定时/周期性”自动发送任务。微信需在 Windows 桌面端保持登录状态。
+## 项目目录
 
-## 功能概览
-
-- 多用户/多账号管理
-  - 支持多用户配置（`server/.user`）
-  - 每个用户拥有独立的任务数据、日志
-  - 微信通过 Windows 桌面端预登录（wx4py UI Automation）
-- 机器人状态面板
-  - online / offline
-  - 展示当前微信用户连接状态
-  - wx4py 桥接状态显示
-- 群组管理
-  - 拉取群列表、显示成员数
-  - 搜索群
-  - 从群一键跳转到任务创建并预填目标群
-- 联系人支持
-  - 拉取好友联系人列表
-  - 创建任务时可选联系人为目标
-- 定时任务管理
-  - 创建任务：目标（群/联系人）、消息类型（文本/图片/文件）、周期（一次/每天/每周/每月/每隔多久）
-  - 任务列表：按状态过滤（pending/success/failed）、删除任务
-  - 调度执行：每 10 秒扫描到期任务并执行；周期任务自动推算下一次执行时间
-- 系统日志
-  - 查看最近 100 条 info/error 日志
-  - 前端在日志页轮询刷新
-
-## 技术栈
-
-- Client：React + TypeScript + Vite + TailwindCSS（axios + JWT 鉴权）
-- Server：Node.js + TypeScript + Express + wx4py (Python bridge) + lowdb（多租户数据隔离）
-
-## 目录结构
-
-- client：管理后台前端（Vite）
-- server：后端服务
-  - src/index.ts：入口，启动 wx4py 桥接连接 + 调度器
-  - src/api.ts：REST API
-  - src/wxBridge.ts：wx4py Python 桥接 HTTP 客户端
-  - src/botManager.ts：Bot 单例管理器 + 群组/联系人缓存
-  - src/dbManager.ts：多租户 DB 管理器（lowdb）
-  - src/userManager.ts：用户配置与认证
-  - src/scheduler.ts：多用户定时任务扫描
-  - src/taskQueue.ts：任务执行队列（通过 wx4py 发送消息）
-  - pybridge/bridge.py：wx4py Python HTTP 桥接服务（127.0.0.1:39800）
-  - users/：存放各用户数据（自动生成，已在 .gitignore 中忽略）
-    - `<username>/db.json`：任务数据
-  - .user：用户账号配置文件（已在 .gitignore 中忽略）
-
-## 快速开始
-
-### 1) 配置用户
-
-在 `server` 目录下创建或修改 `.user` 文件（JSON 格式）来配置登录账号：
-
-```json
-{
-  "admin": "admin123",
-  "user2": "password456"
-}
+```
+WxSchedule/
+├── client/                     # React + Vite 前端（构建输出到 client/dist/）
+│   └── src/                    # TypeScript 源码
+├── server/
+│   ├── db.json                 # 【核心数据】单用户数据库（contacts/tasks/templates/logs）
+│   ├── dist/                   # Node.js 后端（ESM 模块，生产环境直接运行）
+│   │   ├── index.js            # 入口，端口 3000
+│   │   ├── api.js              # 所有 HTTP API 路由
+│   │   ├── auth.js             # 身份验证（JWT + .user 文件）
+│   │   ├── dbManager.js        # 数据库读写（lowdb）
+│   │   ├── botManager.js       # wx4py bridge 连接管理
+│   │   ├── taskQueue.js        # 任务队列
+│   │   ├── scheduler.js        # 定时调度
+│   │   ├── wxBridge.js         # bridge HTTP 客户端
+│   │   ├── ecosystem.config.cjs # PM2 配置
+│   │   ├── start.bat           # 简易启动脚本
+│   │   └── .user               # 【重要】登录凭证文件（JSON: {用户名: 密码或bcrypt}）
+│   └── pybridge/               # Python 微信操作桥接
+│       ├── bridge.py           # HTTP 服务（端口 39800），依赖 wx4py
+│       └── requirements.txt    # Python 依赖
 ```
 
-默认会自动创建一个 `admin: admin123` 的配置。
+## 架构
 
-### 2) 启动 wx4py 桥接
-
-```bash
-cd server/pybridge
-pip install -r requirements.txt
-python bridge.py
+```
+浏览器 → Nginx(:80) → Node.js(:3000) → Python Bridge(:39800) → 微信桌面客户端
+                              │
+                         server/db.json（数据存储）
 ```
 
-桥接服务监听：`http://127.0.0.1:39800`
+- **Node.js（HTTP 3000）**：提供前端页面和 REST API
+- **Python Bridge（HTTP 39800）**：封装 wx4py，操作微信桌面客户端
+- **数据**：单个 JSON 文件 `server/db.json`（单用户，非多用户体系）
+- **微信**：必须与 Bridge 运行在**同一 Windows 会话**
 
-### 3) 启动后端
+## 启动方式
 
-```bash
-cd server
-npm install
-npm run dev
+### 方式一：PM2（推荐，无窗口）
+
+```powershell
+cd C:\Users\Administrator\WxWorkSchedule\server\dist
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup   # 开机自启（需管理员权限运行一次）
 ```
 
-默认监听：`http://localhost:3000`
+### 方式二：VNC 桌面手动启动
 
-### 4) 启动前端
-
-```bash
-cd client
-npm install
-npm run dev
+窗口1（Bridge，必须在 VNC 桌面会话中启动）：
+```cmd
+C:\Python314\python.exe C:\Users\Administrator\WxWorkSchedule\server\pybridge\bridge.py
 ```
 
-默认访问：`http://localhost:5173`
-
-前端已配置 `/api -> http://localhost:3000` 代理。
-
-## 配置
-
-### JWT Secret
-
-建议在 `server/.env` 中配置 JWT 密钥以增强安全性：
-
-```env
-JWT_SECRET=your_super_secure_secret_key
+窗口2（Node）：
+```cmd
+C:\Users\Administrator\WxWorkSchedule\server\dist\start.bat
 ```
 
-### 用户账号
+## 关键注意事项
 
-如上所述，修改 `server/.user` 文件。该文件包含敏感密码信息，**请勿提交到版本控制系统**（已默认忽略）。
+### ⚠️ 数据文件（绝对不能覆盖！）
 
-## 使用说明（管理后台）
+| 文件 | 路径 | 说明 |
+|------|------|------|
+| **数据库** | `server/db.json` | 联系人和定时任务，单文件存储 |
+| **登录凭证** | `server/dist/.user` | 明文或 bcrypt，首次登录自动创建 |
 
-1. 确保 Windows 桌面端微信已登录并保持运行
-2. 启动 wx4py 桥接（`python bridge.py`），确保桥接可以操作微信窗口
-3. 打开前端页面，输入用户名（如 `admin`）和密码登录
-4. 在”概览”页查看机器人状态（online / offline）
-5. 在”群组管理”页搜索群并点击”发送消息”
-6. 在”任务管理”页创建定时任务
-7. 在”系统日志”页查看运行日志
+### ⚠️ Windows 会话隔离
 
-## 部署到远程服务器
+Bridge 必须在**微信所在的同一 Windows 会话**中启动，否则看不到微信窗口。
+- **正确方式**：VNC 连接到桌面 → 在桌面会话中启动 bridge.py
+- **SSH 启动的进程在 session 0**，看不到桌面会话（session 2）的微信窗口 → 状态显示"微信未运行"
 
-项目提供了部署脚本 `deploy.ps1` 和 Nginx 示例配置 `nginx.conf.example`。
+### ⚠️ PM2 环境变量
 
-### 1) 前置条件
+`auth.js` 已内置 JWT_SECRET 兜底值，无需额外配置环境变量即可运行。
 
-- 本地环境已安装 `ssh` 和 `scp`（Windows 通常已内置）。
-- 拥有目标服务器的 SSH 访问权限。
-- 目标服务器已安装 `node` (v18+), `npm`, `pm2`, `nginx`。
+### ⚠️ .gitignore
 
-### 2) 部署步骤
+`server/dist/` 目录在 `.gitignore` 中，**dist 文件不会被 git 跟踪**。部署时需手动同步或使用 `git add -f`。
 
-1. 修改 `deploy.ps1` 中的配置：
-   ```powershell
-   $SERVER_IP = "43.153.88.215"
-   $REMOTE_DIR = "/www/wwwroot/WxWork"
-   $USER = "root"
-   ```
-2. 在本地 PowerShell 中运行部署脚本：
-   ```powershell
-   .\deploy.ps1
-   ```
-   该脚本会自动：
-   - 在本地构建前端 (`client/dist`) 和后端 (`server/dist`)
-   - 将构建产物上传到服务器
-   - 在服务器上安装依赖并使用 PM2 启动服务
+**部署流程**：本地修改 → `git commit` → `git push` → `scp` 到远端 → PM2 restart
 
-### 3) 配置 Nginx
+### ⚠️ 微信 4.1.x 兼容
 
-参考 `nginx.conf.example` 配置服务器 Nginx，以反向代理 API 并服务静态文件：
+wx4py fork 已修改为使用 comtypes `FindAll` 绕过微信 4.1 的 GetChildren 屏蔽。
+- SPI 屏幕阅读器标志 + RunningState 注册表键由 bridge.py 自动维护
+- `find_control()` 在 WeChat 4.x 上自动使用 FindAll 绕过
 
-```nginx
-server {
-    listen 80;
-    server_name your_domain_or_ip;
-    root /www/wwwroot/WxWork/client;
-    
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-    
-    location /api/ {
-        proxy_pass http://localhost:3000/api/;
-        ...
-    }
-}
+## 常用命令
+
+```powershell
+# PM2 管理
+pm2 list                  # 查看进程状态
+pm2 logs wx-schedule      # 查看日志
+pm2 restart wx-schedule   # 重启后端
+
+# 检查微信连接
+curl http://localhost:39800/status   # Bridge 状态
+curl http://localhost:3000/api/status  # Node（需 token）
+
+# 手动触发微信恢复（关弹窗+点登录）
+curl -X POST http://localhost:39800/recover
 ```
 
-## 数据存储
+## 排查方向
 
-- 所有数据按用户名隔离存储在 `server/users/<username>/` 目录下。
-- 敏感数据（Session、任务内容）均在此目录，请妥善备份但不要上传到公开仓库。
+1. **网页打不开** → 检查 `tasklist /fi "imagename eq node.exe"`，如无进程则 PM2 restart
+2. **微信未连接** → Bridge 是否在桌面会话中运行？VNC 是否断开？
+3. **数据丢失** → 检查 `server/db.json` 是否存在且有内容（正常约 220KB）
+4. **密码错误** → 检查 `server/dist/.user` 文件，格式为 `{"用户名":"密码"}`
+5. **API 返回 Unauthorized** → 刷新页面重新登录获取新 token
 
-## API 速查
+## Git 分支
 
-### 认证
-
-- `POST /api/login`：用户登录（body: `{ username, password }`），返回 JWT Token
-- `POST /api/logout`：用户退出
-
-### 机器人（需携带 Bearer Token）
-
-- `GET /api/status`：获取 wx4py 桥接和微信连接状态
-- `POST /api/bot/restart`：重新连接 wx4py 桥接
-
-### 群组/联系人（需携带 Bearer Token）
-
-- `GET /api/groups`：获取群列表
-- `GET /api/contacts`：获取联系人列表
-
-### 任务（需携带 Bearer Token）
-
-- `GET /api/tasks`：获取任务列表
-- `POST /api/tasks`：创建任务
-- `DELETE /api/tasks/:id`：删除任务
-
-### 日志（需携带 Bearer Token）
-
-- `GET /api/logs`：获取最近 100 条日志
-
-## 已知限制与注意事项
-
-- wx4py 依赖 Windows UI Automation：必须在本机 Windows 桌面环境运行，微信需保持登录状态，不能最小化到托盘。
-- 群列表枚举限制：wx4py 无直接列举群组的 API，群列表通过搜索扫描获取，可能不完整。
-- 调度扫描周期为 10 秒：任务触发时间存在最多约 10 秒的延迟。
-- 单用户模型：所有 Web 用户共享同一个微信桌面端实例，适合个人/小团队使用。
-
+- `fork4win`：当前活跃分支
+- `main`：原始分支
+- 仓库：`git@github.com:arthur20150522/WxWorkSchedule.git`
