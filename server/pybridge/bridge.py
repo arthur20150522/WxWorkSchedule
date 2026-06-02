@@ -36,10 +36,10 @@ AUTO_RECOVER_ENABLED = True
 AUTO_RECOVER_INTERVAL = 300  # 5 minutes
 
 def try_auto_recover():
-    """Pure Win32 recovery: dismiss popups then click login — no COM/UIA needed, works cross-session."""
+    """Auto-recovery: bring WeChat to foreground, dismiss popups, click login, wait for main window."""
     try:
         import ctypes, win32gui, win32con, time
-        
+
         def click_at(cx, cy):
             ctypes.windll.user32.SetCursorPos(cx, cy)
             time.sleep(0.05)
@@ -47,8 +47,8 @@ def try_auto_recover():
             time.sleep(0.03)
             ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
             time.sleep(0.15)
-        
-        # ── Find WeChat HWND via wx4py (handles WeChatAppEx.exe) ──
+
+        # ── Step 1: find WeChat window ──
         hwnd = 0
         try:
             from wx4py.core.win32 import find_wechat_window
@@ -57,72 +57,110 @@ def try_auto_recover():
             pass
 
         if not hwnd:
-            log.debug('[recover] No WeChat window found')
+            log.debug('[recover] No WeChat window found — WeChat may not be running')
             return
-        
+
         title = win32gui.GetWindowText(hwnd) or ''
         class_name = win32gui.GetClassName(hwnd) or ''
-        log.info(f'[recover] WeChat: HWND={hwnd} title={title} class={class_name}')
-        
-        # ── Strategy: use UIA first (if available), then pure Win32 fallback ──
-        try_clicked = False
-        
-        # Try UIA FindAll first (requires same session)
-        popup_dismissed = False
+        log.info(f'[recover] WeChat: HWND={hwnd} title={title[:30]!r} class={class_name}')
+
+        # ── Step 2: bring to foreground + let it fully render (20s) ──
+        from wx4py.core.win32 import is_window_visible
+        if not is_window_visible(hwnd):
+            log.info('[recover] WeChat not visible, restoring...')
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            time.sleep(0.5)
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+        time.sleep(0.5)
+
+        # ── Step 3: UIA scan for popup / login ──
+        clicked_login = False
+
         try:
             import pythoncom; pythoncom.CoInitialize()
             import comtypes.client as cc
             import comtypes.gen.UIAutomationClient as UIA
+
+            # Refresh hwnd after bring-to-front (window may have changed)
+            hwnd = find_wechat_window() or hwnd
+
             uia = cc.CreateObject('{ff48dba4-60ef-4201-aa87-54103eef594e}', interface=UIA.IUIAutomation)
             elem = uia.ElementFromHandle(hwnd)
             all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
 
-            # Step A: dismiss "我知道了" popup
+            # Check for popup with "我知道了"
             for i in range(all_e.Length):
                 e = all_e.GetElement(i)
                 n = e.CurrentName or ''; c = e.CurrentClassName or ''
                 if n == '我知道了' and ('Button' in c or 'mmui' in c):
                     br = e.CurrentBoundingRectangle
                     cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
-                    log.info(f'[recover] UIA: click "我知道了" at ({cx},{cy})')
-                    click_at(cx, cy); time.sleep(1)
-                    popup_dismissed = True
+                    log.info(f'[recover] Clicking "我知道了" at ({cx},{cy})')
+                    click_at(cx, cy)
+                    time.sleep(2)
+                    # Re-scan after dismissing popup (window layout changes)
+                    hwnd = find_wechat_window() or hwnd
+                    elem = uia.ElementFromHandle(hwnd)
+                    all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
                     break
 
-            # Step B: click "进入微信" / "登录"
+            # Check for "进入微信" / "登录" button
             for i in range(all_e.Length):
                 e = all_e.GetElement(i)
                 n = e.CurrentName or ''
                 if n in ('登录', '进入微信'):
                     br = e.CurrentBoundingRectangle
                     cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
-                    log.info(f'[recover] UIA: click "{n}" at ({cx},{cy})')
+                    log.info(f'[recover] Clicking "{n}" at ({cx},{cy})')
                     click_at(cx, cy)
-                    try_clicked = True
+                    clicked_login = True
                     break
-        except Exception as e:
-            log.debug(f'[recover] UIA failed (expected if session mismatch): {e}')
 
-        # ── Pure Win32 fallback ──
-        # Only use Win32 if UIA couldn't handle it (cross-session or UIA not finding elements).
-        # If UIA already dismissed the popup, don't blindly Tab+Enter — we might land on wrong button.
-        if not try_clicked and not popup_dismissed:
-            log.info('[recover] Using Win32 fallback...')
+        except Exception as e:
+            log.warning(f'[recover] UIA scan failed: {e}')
+
+        # ── Step 4: wait for main window after login click (up to 25s) ──
+        if clicked_login:
+            log.info('[recover] Waiting for WeChat main window after login click...')
+            for i in range(50):  # 50 × 0.5s = 25s
+                time.sleep(0.5)
+                try:
+                    hwnd = find_wechat_window()
+                    if hwnd:
+                        cls = win32gui.GetClassName(hwnd)
+                        if 'MainWindow' in cls:
+                            log.info(f'[recover] Main window appeared: HWND={hwnd}')
+                            # Refresh wx4py client connection
+                            global _wx
+                            if _wx is not None:
+                                try:
+                                    _wx.disconnect()
+                                except Exception:
+                                    pass
+                                _wx = None
+                            return
+                except Exception:
+                    pass
+                if i % 10 == 0:
+                    log.debug(f'[recover] Still waiting for main window ({i * 0.5:.0f}s)...')
+            log.warning('[recover] Timed out waiting for main window')
+
+        # ── Step 5: Win32 keyboard fallback (cross-session only) ──
+        if not clicked_login:
+            log.info('[recover] UIA didn\'t click login, trying Win32 fallback...')
             ctypes.windll.user32.SetForegroundWindow(hwnd)
             time.sleep(0.5)
-            # First: press Enter to dismiss any "我知道了" popup
-            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0); time.sleep(0.1)
+            # Press Enter to dismiss popup
+            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0)
+            time.sleep(0.1)
             ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
-            time.sleep(0.5)
-            # Then: Tab to navigate to login button + Enter
-            for _ in range(8):
-                ctypes.windll.user32.keybd_event(0x09, 0, 0, 0); time.sleep(0.15)
-                ctypes.windll.user32.keybd_event(0x09, 0, win32con.KEYEVENTF_KEYUP, 0); time.sleep(0.1)
-            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0); time.sleep(0.1)
+            time.sleep(1)
+            # Press Enter again (often lands on login button after popup)
+            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0)
+            time.sleep(0.1)
             ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
-            log.info('[recover] Win32 Enter+Tab+Enter sent')
-        elif popup_dismissed and not try_clicked:
-            log.info('[recover] Popup dismissed by UIA, skipping Win32 fallback (user can click login manually or trigger recover again)')
+            log.info('[recover] Win32 Enter × 2 sent')
+
     except Exception as e:
         log.error(f'[recover] Error: {e}')
 
