@@ -58,14 +58,14 @@ export const wxBridge = {
     async send(target, message, targetType) {
         return fetchBridge('/send', {
             method: 'POST',
-            body: JSON.stringify({ target, message, targetType }),
+            body: JSON.stringify({ target, message, target_type: targetType || 'contact' }),
         });
     },
     /** Batch send to multiple targets */
     async batchSend(targets, message, targetType) {
         return fetchBridge('/batch-send', {
             method: 'POST',
-            body: JSON.stringify({ targets, message, targetType }),
+            body: JSON.stringify({ targets, message, target_type: targetType || 'contact' }),
         });
     },
     /** Trigger auto-recovery (dismiss popup + click login) */
