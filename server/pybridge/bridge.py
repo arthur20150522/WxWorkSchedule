@@ -130,14 +130,20 @@ def try_auto_recover():
                         cls = win32gui.GetClassName(hwnd)
                         if 'MainWindow' in cls:
                             log.info(f'[recover] Main window appeared: HWND={hwnd}')
-                            # Refresh wx4py client connection
+                            # Reconnect wx4py client to new main window
                             global _wx
                             if _wx is not None:
                                 try:
                                     _wx.disconnect()
                                 except Exception:
                                     pass
-                                _wx = None
+                            _wx = None
+                            # Trigger fresh connection immediately
+                            try:
+                                wx_new = get_wx()
+                                log.info(f'[recover] Reconnected: {wx_new.is_connected}')
+                            except Exception as e:
+                                log.warning(f'[recover] Reconnect failed: {e}, will retry on next request')
                             return
                 except Exception:
                     pass
