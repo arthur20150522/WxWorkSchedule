@@ -286,23 +286,33 @@ class BridgeHandler(BaseHTTPRequestHandler):
     
     def _get_wechat_hwnd(self):
         """Get WeChat window HWND, trying multiple approaches."""
+        # Approach 1: use wx4py's find_wechat_window (handles WeChatAppEx.exe)
+        try:
+            from wx4py.core.win32 import find_wechat_window
+            hwnd = find_wechat_window()
+            if hwnd:
+                return hwnd
+        except Exception:
+            pass
+
+        # Approach 2: fallback to wx4py client's cached hwnd
         try:
             wx = get_wx()
             if wx.is_connected:
-                return wx._window.hwnd
-        except:
+                hwnd = wx._window.hwnd
+                if hwnd:
+                    return hwnd
+                # hwnd is 0 but claims connected — force reconnect
+                log.info('[hwnd] wx4py connected but hwnd=0, forcing reconnect...')
+                wx.disconnect()
+                global _wx
+                _wx = None
+                wx2 = get_wx()
+                return wx2._window.hwnd or 0
+        except Exception:
             pass
-        # Fallback: win32gui enumeration
-        import win32gui, ctypes
-        result = [0]
-        def cb(h, _):
-            c = win32gui.GetClassName(h)
-            if 'mmui' in c and win32gui.IsWindowVisible(h):
-                result[0] = h; return False
-            return True
-        CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-        ctypes.windll.user32.EnumWindows(CB(cb), 0)
-        return result[0] or 0
+
+        return 0
     
     def _handle_status(self):
         try:

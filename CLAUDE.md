@@ -22,7 +22,7 @@
 
 - **禁止执行完整 Build/打包**。仅做 `tsc --noEmit` 类型检查。
 - **禁止执行 `npm run build`**。
-- **不要修改 `server/pybridge/bridge.py`**（wx4py 桥接层）。
+- **wx4py 使用本地 fork** (`E:\Python Project\wx4py`)，通过 `pip install -e .` 安装。远程服务器同样需要安装此 fork。
 - **不要恢复多用户架构**。当前是单文件 DB + 全局单队列。
 - **不要重新引入 Wechaty 兼容层**（Room.say / Contact.say 等）。
 - **不要硬编码用户名**。.user 支持任意 username:password。
