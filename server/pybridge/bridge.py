@@ -32,8 +32,52 @@ AUTO_RECOVER_ENABLED = True
 AUTO_RECOVER_INTERVAL = 300  # 5 minutes
 
 def try_auto_recover():
-    """Check if WeChat is on login page, try to click login button."""
+    """Check if WeChat needs recovery: dismiss popups, click login."""
     try:
+        import pythoncom
+        pythoncom.CoInitialize()
+        import comtypes.client as cc
+        import comtypes.gen.UIAutomationClient as UIA
+        import ctypes, pyperclip, win32con, win32gui
+        
+        # ── Step 0: Dismiss "提示" / "你已退出微信" popup if present ──
+        uia_client = cc.CreateObject(
+            '{ff48dba4-60ef-4201-aa87-54103eef594e}',
+            interface=UIA.IUIAutomation,
+        )
+        
+        # Enumerate all top-level windows to find "提示" dialog
+        def find_popup(hwnd, _):
+            title = win32gui.GetWindowText(hwnd)
+            cls = win32gui.GetClassName(hwnd)
+            if ('提示' in title or '退出' in title) and win32gui.IsWindowVisible(hwnd):
+                log.info(f'[recover] Found popup: HWND={hwnd} title={title} class={cls}')
+                try:
+                    elem = uia_client.ElementFromHandle(hwnd)
+                    condition = uia_client.CreateTrueCondition()
+                    all_e = elem.FindAll(UIA.TreeScope_Subtree, condition)
+                    for i in range(all_e.Length):
+                        e = all_e.GetElement(i)
+                        n = e.CurrentName or ''
+                        if '我知道了' in n or '确定' in n or 'OK' in n:
+                            br = e.CurrentBoundingRectangle
+                            cx = (br.left + br.right) // 2
+                            cy = (br.top + br.bottom) // 2
+                            log.info(f'[recover] Clicking "{n}" at ({cx},{cy})')
+                            ctypes.windll.user32.SetCursorPos(cx, cy)
+                            time.sleep(0.1)
+                            ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
+                            time.sleep(0.05)
+                            ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
+                            return True
+                except Exception as e:
+                    log.debug(f'[recover] Popup UIA failed: {e}')
+            return True
+        
+        CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        ctypes.windll.user32.EnumWindows(CB(find_popup), 0)
+        
+        # ── Step 1: Check WeChat connection ──
         wx = get_wx()
         if not wx.is_connected:
             log.info('[recover] WeChat disconnected, reconnecting...')
@@ -44,32 +88,20 @@ def try_auto_recover():
         if not hwnd:
             return
 
-        # Check if on login page via window title
+        # ── Step 2: Check if on login page ──
         try:
             title = wx._window.title or ''
         except:
             title = ''
         
         if '登录' not in title and '登錄' not in title and 'login' not in title.lower():
-            return  # Not on login page, all good
+            return  # All good
 
         log.info(f'[recover] Detected login page, attempting auto-login...')
         
-        # Use comtypes FindAll to find and click login button
-        import pythoncom
-        pythoncom.CoInitialize()
-        import comtypes.client as cc
-        import comtypes.gen.UIAutomationClient as UIA
-        
-        uia = cc.CreateObject(
-            '{ff48dba4-60ef-4201-aa87-54103eef594e}',
-            interface=UIA.IUIAutomation,
-        )
-        elem = uia.ElementFromHandle(hwnd)
-        condition = uia.CreateTrueCondition()
+        elem = uia_client.ElementFromHandle(hwnd)
+        condition = uia_client.CreateTrueCondition()
         all_e = elem.FindAll(UIA.TreeScope_Subtree, condition)
-        
-        import ctypes, pyperclip, win32con
         
         for i in range(all_e.Length):
             e = all_e.GetElement(i)
@@ -88,7 +120,7 @@ def try_auto_recover():
                 return
         
         # Tab+Enter fallback
-        log.info('[recover] Login button not found via UIA, trying Tab+Enter...')
+        log.info('[recover] Login button not found, Tab+Enter...')
         ctypes.windll.user32.SetForegroundWindow(hwnd)
         time.sleep(0.5)
         for _ in range(8):
