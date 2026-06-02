@@ -40,31 +40,41 @@ WxSchedule/
 
 ## 启动方式
 
-### 方式一：PM2 + VNC（生产环境）
+### 生产环境（PM2 管理全部进程）
 
-**Node 用 PM2**：
+两个进程均由 PM2 管理，从 VNC 桌面启动：
+
 ```powershell
 cd C:\Users\Administrator\WxWorkSchedule\server\dist
+pm2 start ecosystem.config.cjs   # 启动 wx-schedule (Node) + wx-bridge (Python)
+pm2 save
+```
+
+| PM2 进程 | 类型 | 端口 | 说明 |
+|----------|------|------|------|
+| `wx-schedule` | Node.js | 3000 | 后端 API + 调度器 |
+| `wx-bridge` | Python | 39800 | wx4py 微信操作桥接 |
+
+> **注意**：PM2 必须在 VNC 桌面会话中启动（不能从 SSH 启动），否则 bridge 运行在 Session 0 无法看到微信窗口。
+
+### 首次部署
+
+```powershell
+# 1. 克隆项目
+git clone git@github.com:arthur20150522/WxWorkSchedule.git
+cd WxWorkSchedule
+
+# 2. 安装依赖
+cd server && npm install && cd ..
+pip install git+https://github.com/arthur20150522/wx4py.git
+
+# 3. 配置 SSH Key（用于后续 git pull 拉取更新）
+#    将本机 ~/.ssh/id_rsa 复制到服务器 C:\Users\Administrator\.ssh\id_rsa
+
+# 4. 启动
+cd server\dist
 pm2 start ecosystem.config.cjs
 pm2 save
-pm2 startup   # 开机自启（需管理员权限运行一次）
-```
-
-**Bridge 必须从 VNC 桌面启动**（PM2 无法管理，见会话隔离章节）：
-```cmd
-C:\Python314\python.exe C:\Users\Administrator\WxWorkSchedule\server\pybridge\bridge.py
-```
-
-### 方式二：全部 VNC 桌面手动启动
-
-窗口1（Bridge，必须在 VNC 桌面会话中启动）：
-```cmd
-C:\Python314\python.exe C:\Users\Administrator\WxWorkSchedule\server\pybridge\bridge.py
-```
-
-窗口2（Node）：
-```cmd
-C:\Users\Administrator\WxWorkSchedule\server\dist\start.bat
 ```
 
 ## 关键注意事项
@@ -78,18 +88,18 @@ C:\Users\Administrator\WxWorkSchedule\server\dist\start.bat
 
 ### ⚠️ Windows 会话隔离（最重要！）
 
-Bridge 必须在**微信所在的同一 Windows 会话**中启动，否则看不到微信窗口。
+Bridge 必须与微信在**同一 Windows 桌面会话**中运行，否则 UIA / EnumWindows 看不到微信窗口。
 
-| 启动方式 | 会话 | 能否看到微信 | 说明 |
-|----------|------|-------------|------|
-| **VNC 桌面 cmd** | Console (session 2) | ✅ | 唯一可靠方式，窗口保持打开 |
-| SSH 直接运行 | Services (session 0) | ❌ | 状态显示"微信未运行" |
-| PM2 管理 | Services (session 0) | ❌ | PM2 也在 session 0，同样不行 |
-| schtasks | Services (session 0) | ❌ | 普通计划任务也不行 |
+| 启动方式 | 会话 | 能否看到微信 |
+|----------|------|:----------:|
+| VNC 桌面启动 PM2 | Console (session 2) | ✅ |
+| VNC 桌面直接启动 | Console (session 2) | ✅ |
+| SSH 启动 | Session 0 | ❌ |
+| 计划任务 | Session 0 | ❌ |
 
-**正确操作**：VNC 连接 → 桌面开 cmd → 运行 `bridge.py` → **保持 cmd 窗口不关闭**
-- 断开 VNC 不关窗口**不会**影响 Bridge（进程仍在 session 2 运行）
-- 关掉 VNC 窗口的 cmd 进程才会断
+**正确操作**：VNC 连接 → 桌面开 PowerShell → 启动 PM2
+- 断开 VNC 连接**不关窗口** → 进程仍在 session 2 运行
+- 关闭/注销 VNC 会话 → 微信和 bridge 都会断
 
 ### ⚠️ PM2 环境变量
 
@@ -107,42 +117,77 @@ wx4py fork 已修改为使用 comtypes `FindAll` 绕过微信 4.1 的 GetChildre
 - SPI 屏幕阅读器标志 + RunningState 注册表键由 bridge.py 自动维护
 - `find_control()` 在 WeChat 4.x 上自动使用 FindAll 绕过
 
-## 源码修改后部署
+## 部署流程
 
-```powershell
-# 1. 重新编译 TypeScript（重要！dist/ 不在 git 跟踪中）
-cd C:\Users\Administrator\WxWorkSchedule\server
-npx tsc
+**所有代码变更必须通过 Git**，禁止 scp / 直接修改远程文件。
 
-# 2. 重启 PM2 加载新代码
-pm2 restart wx-schedule
+```
+本地 → git add + commit → git push origin fork4win
+远程 → git pull origin fork4win → npx tsc → pm2 restart wx-schedule wx-bridge
 ```
 
-> **警告**：修改 `server/src/*.ts` 源文件后必须重新 `npx tsc` 编译，否则 PM2 仍运行旧的 dist/ 代码，导致"源码改了但功能不变"的诡异 bug。
+> 远程 git pull 需先配置 SSH key（复制本机 `~/.ssh/id_rsa` 到远程 `C:\Users\Administrator\.ssh\id_rsa`），然后用 SSH 协议：`git remote set-url origin git@github.com:arthur20150522/WxWorkSchedule.git`
+
+### 修改 bridge.py 后
+```powershell
+git pull                    # 拉取最新 bridge.py
+pm2 restart wx-bridge       # 仅重启 Python bridge（无需重编译 Node）
+```
+
+### 修改 Node 源码后
+```powershell
+git pull                    # 拉取最新 .ts 源码
+cd server && npx tsc        # 重新编译 TypeScript
+pm2 restart wx-schedule     # 重启 Node 后端
+```
+
+### wx4py Fork
+
+项目使用自维护的 wx4py fork (`github.com/arthur20150522/wx4py`)，包含关键修复：
+
+- **find_wechat_window()** — 支持新版微信 `WeChatAppEx.exe` 进程名和 Qt 类名窗口
+- **FindAll 兼容** — 使用 `FindAll(TreeScope_Subtree)` 绕过微信 4.x 的 GetChildren 屏蔽
+- **is_connected 修正** — 同时检查 `_hwnd is not None`，防止假连接状态
+
+```powershell
+# 安装/更新
+pip install git+https://github.com/arthur20150522/wx4py.git --force-reinstall
+pm2 restart wx-bridge
+```
 
 ## 常用命令
 
 ```powershell
 # PM2 管理
-pm2 list                  # 查看进程状态
-pm2 logs wx-schedule      # 查看日志
-pm2 restart wx-schedule   # 重启后端
+pm2 list                        # 查看进程状态（含 wx-schedule + wx-bridge）
+pm2 logs wx-schedule            # 查看 Node 日志
+pm2 logs wx-bridge              # 查看 Bridge 日志
+pm2 restart wx-schedule         # 重启 Node 后端
+pm2 restart wx-bridge           # 重启 Python Bridge
 
 # 检查微信连接
-curl http://localhost:39800/status   # Bridge 状态
-curl http://localhost:3000/api/status  # Node（需 token）
+curl http://localhost:39800/status       # Bridge 快速状态
+curl http://localhost:39800/deep-health  # Bridge 深度检查（UIA 扫描）
+curl http://localhost:3000/api/status    # Node API 状态（需 token）
 
 # 手动触发微信恢复（关弹窗+点登录）
-curl -X POST http://localhost:39800/recover
+curl http://localhost:39800/recover         # 直接调 Bridge
+curl -X POST /api/bridge/recover            # 通过 Node API（需 token，前端用）
 ```
 
 ## 排查方向
 
-1. **网页打不开** → 检查 `tasklist /fi "imagename eq node.exe"`，如无进程则 PM2 restart
-2. **微信未连接** → Bridge 是否在桌面会话中运行？VNC 是否断开？
-3. **数据丢失** → 检查 `server/db.json` 是否存在且有内容（正常约 220KB）。同时确认 PM2 日志中 `[DB] Initializing at` 路径指向 `server/db.json` 而非 `server/dist/db.json`
-4. **密码错误** → 检查 `server/dist/.user` 文件，格式为 `{"用户名":"密码"}`
-5. **API 返回 Unauthorized** → 刷新页面重新登录获取新 token
+1. **网页打不开** → 检查 `pm2 list`，确认 `wx-schedule` 和 `wx-bridge` 都在线
+2. **微信未连接（status: popup/login/not_running）** → 
+   - 检查 VNC 桌面是否正常、微信是否在运行
+   - `curl http://localhost:39800/deep-health` 查看具体状态
+   - 如显示 popup/login，执行 `curl http://localhost:39800/recover` 尝试自动恢复
+   - 新版微信进程名为 `WeChatAppEx.exe`（非 `WeChat.exe`），需用 wx4py fork 的 `find_wechat_window()` 检测
+3. **bridge 状态 hwnd=0 但 connected=true** → wx4py 缓存了失效窗口句柄 → `pm2 restart wx-bridge` 重建连接
+4. **数据丢失** → 检查 `server/db.json` 是否存在且有内容（正常约 220KB）。同时确认 PM2 日志中 `[DB] Initializing at` 路径指向 `server/db.json` 而非 `server/dist/db.json`
+5. **密码错误** → 检查 `server/dist/.user` 文件，格式为 `{"用户名":"密码"}`
+6. **API 返回 Unauthorized** → 刷新页面重新登录获取新 token
+7. **git pull 失败 (HTTPS)** → 远程到 GitHub 443 端口可能被墙 → 改用 SSH 协议（需先配 SSH key）
 
 ## Git 分支
 
