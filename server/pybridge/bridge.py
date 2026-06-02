@@ -48,19 +48,16 @@ def try_auto_recover():
             ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
             time.sleep(0.15)
         
-        # ── Find WeChat HWND via win32gui (works cross-session) ──
+        # ── Find WeChat HWND via wx4py (handles WeChatAppEx.exe) ──
         hwnd = 0
-        def find_wechat(h, _):
-            nonlocal hwnd
-            c = win32gui.GetClassName(h)
-            if 'mmui' in c and win32gui.IsWindowVisible(h):
-                hwnd = h; return False
-            return True
-        CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-        ctypes.windll.user32.EnumWindows(CB(find_wechat), 0)
-        
+        try:
+            from wx4py.core.win32 import find_wechat_window
+            hwnd = find_wechat_window() or 0
+        except Exception:
+            pass
+
         if not hwnd:
-            log.debug('[recover] No visible WeChat window')
+            log.debug('[recover] No WeChat window found')
             return
         
         title = win32gui.GetWindowText(hwnd) or ''
@@ -104,23 +101,23 @@ def try_auto_recover():
         except Exception as e:
             log.debug(f'[recover] UIA failed (expected if session mismatch): {e}')
         
-        # ── Pure Win32 fallback: Tab + Enter ──
-        if not try_clicked and ('登录' in title or 'Login' in class_name or 'MainWindow' not in class_name):
-            log.info('[recover] Using Win32 Tab+Enter fallback...')
+        # ── Pure Win32 fallback: dismiss popup, then Tab + Enter ──
+        # UIA can fail cross-session; Win32 fallback works anywhere
+        if not try_clicked:
+            log.info('[recover] Using Win32 fallback...')
             ctypes.windll.user32.SetForegroundWindow(hwnd)
             time.sleep(0.5)
-            # Try clicking center first (often the login button is there)
-            rect = win32gui.GetWindowRect(hwnd)
-            cx = (rect[0]+rect[2])//2; cy = (rect[1]+rect[3])//2
-            click_at(cx, cy + 50)  # slightly below center
+            # First: press Enter to dismiss any "我知道了" popup
+            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0); time.sleep(0.1)
+            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
             time.sleep(0.5)
-            # Tab to navigate + Enter
+            # Then: Tab to navigate to login button + Enter
             for _ in range(8):
                 ctypes.windll.user32.keybd_event(0x09, 0, 0, 0); time.sleep(0.15)
                 ctypes.windll.user32.keybd_event(0x09, 0, win32con.KEYEVENTF_KEYUP, 0); time.sleep(0.1)
             ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0); time.sleep(0.1)
             ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
-            log.info('[recover] Tab+Enter sent')
+            log.info('[recover] Win32 Enter+Tab+Enter sent')
     except Exception as e:
         log.error(f'[recover] Error: {e}')
 
