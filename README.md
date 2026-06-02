@@ -40,8 +40,9 @@ WxSchedule/
 
 ## 启动方式
 
-### 方式一：PM2（推荐，无窗口）
+### 方式一：PM2 + VNC（生产环境）
 
+**Node 用 PM2**：
 ```powershell
 cd C:\Users\Administrator\WxWorkSchedule\server\dist
 pm2 start ecosystem.config.cjs
@@ -49,7 +50,12 @@ pm2 save
 pm2 startup   # 开机自启（需管理员权限运行一次）
 ```
 
-### 方式二：VNC 桌面手动启动
+**Bridge 必须从 VNC 桌面启动**（PM2 无法管理，见会话隔离章节）：
+```cmd
+C:\Python314\python.exe C:\Users\Administrator\WxWorkSchedule\server\pybridge\bridge.py
+```
+
+### 方式二：全部 VNC 桌面手动启动
 
 窗口1（Bridge，必须在 VNC 桌面会话中启动）：
 ```cmd
@@ -70,11 +76,20 @@ C:\Users\Administrator\WxWorkSchedule\server\dist\start.bat
 | **数据库** | `server/db.json` | 联系人和定时任务，单文件存储 |
 | **登录凭证** | `server/dist/.user` | 明文或 bcrypt，首次登录自动创建 |
 
-### ⚠️ Windows 会话隔离
+### ⚠️ Windows 会话隔离（最重要！）
 
 Bridge 必须在**微信所在的同一 Windows 会话**中启动，否则看不到微信窗口。
-- **正确方式**：VNC 连接到桌面 → 在桌面会话中启动 bridge.py
-- **SSH 启动的进程在 session 0**，看不到桌面会话（session 2）的微信窗口 → 状态显示"微信未运行"
+
+| 启动方式 | 会话 | 能否看到微信 | 说明 |
+|----------|------|-------------|------|
+| **VNC 桌面 cmd** | Console (session 2) | ✅ | 唯一可靠方式，窗口保持打开 |
+| SSH 直接运行 | Services (session 0) | ❌ | 状态显示"微信未运行" |
+| PM2 管理 | Services (session 0) | ❌ | PM2 也在 session 0，同样不行 |
+| schtasks | Services (session 0) | ❌ | 普通计划任务也不行 |
+
+**正确操作**：VNC 连接 → 桌面开 cmd → 运行 `bridge.py` → **保持 cmd 窗口不关闭**
+- 断开 VNC 不关窗口**不会**影响 Bridge（进程仍在 session 2 运行）
+- 关掉 VNC 窗口的 cmd 进程才会断
 
 ### ⚠️ PM2 环境变量
 
