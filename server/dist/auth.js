@@ -6,10 +6,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 const USER_CONFIG_PATH = path.resolve(__dirname, '.user');
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-    throw new Error('JWT_SECRET is not defined in environment variables');
-}
+const JWT_SECRET = process.env.JWT_SECRET || 'wx-schedule-secret-2024';
 function readConfig() {
     try {
         if (!fs.existsSync(USER_CONFIG_PATH))
