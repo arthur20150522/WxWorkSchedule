@@ -110,6 +110,7 @@ metadata:
 - **22:00** 远程 git commit `9b418a6` + 本地 git commit `02d438d` — fix: DB path use import.meta.url instead of process.cwd()
 - **22:30** **BUG** Dashboard "尝试登录"按钮报 404 → 前端调 `POST /api/bridge/recover`，Node API 缺少该路由 → bridge.py 有 `/recover` 端点但未代理
 - **22:35** **修复** `wxBridge.ts` 新增 `recover()` 方法 → `api.ts` 新增 `POST /bridge/recover` 路由 → CLAUDE.md 新增部署流程规则(git only, 禁止 scp) → git push → 远程 git pull + tsc + pm2 restart
+- **23:55** **feat** `pushNotify.ts` 统一推送 — 新增 Server酱 (安卓微信) 与原有 ChuckFang (鸿蒙) 并行推送，`Promise.allSettled` 双通道互不阻塞
 
 ### 关键教训
 
