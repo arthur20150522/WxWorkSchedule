@@ -19,8 +19,8 @@ metadata:
 | 前端改造 | 2026-05-30 | ✅ |
 | 启动/部署工具 | 2026-05-30 | ✅ |
 | 安全加固 | 2026-05-30 | ✅ |
-| 集成验证 | — | ❌ |
-| 部署上线 | — | ❌ |
+| 集成验证 | 2026-06-02 | ✅ |
+| 部署上线 | 2026-06-02 | ✅ |
 
 ---
 
@@ -96,6 +96,27 @@ metadata:
 
 ---
 
+## 2026-06-02 操作日志
+
+### 21:30 ~ 22:00 — 远程部署排障
+
+- **21:30** **BUG** 远程 `39.106.127.176` 实时发送失败，定时任务正常 → SSH 排查 PM2 日志发现 `Bridge HTTP 400: target and message required` → dist/api.js 是旧版多用户架构编译产物，req.body 解构 `target`/`message`，前端发的是 `targetName`/`content` → 字段不匹配 → bridge 收到空值
+- **21:35** **根因** 源文件 api.ts 已更新为 `targetName`/`content`，但 dist/ 未重新编译，PM2 仍在运行旧代码。定时任务不受影响(走 TaskQueue 绕过 API 路由)
+- **21:40** **修复** `npx tsc` 重新编译 → `pm2 restart wx-schedule` → 实时发送恢复正常 ✅
+- **21:45** **BUG** 修复后数据"丢失" → PM2 日志显示 `[DB] Initializing at server/dist/db.json` → 新编译代码在 dist/ 下初始化了空库(711B)，真实数据在 server/db.json(224KB)
+- **21:48** **根因** `dbManager.ts:9` 用 `path.resolve(process.cwd(), 'db.json')` → PM2 cwd = `server/dist/` → 路径指向 dist/db.json 而非 server/db.json
+- **21:50** **修复** 改为 `import.meta.url` + `__dirname` + `'..'` 定位 → `path.resolve(__dirname, '..', 'db.json')` — 始终指向 server/db.json，不受 cwd 影响
+- **21:55** 远程重新编译 + PM2 restart → DB 路径正确指向 server/db.json ✅ → 数据恢复
+- **22:00** 远程 git commit `9b418a6` + 本地 git commit `02d438d` — fix: DB path use import.meta.url instead of process.cwd()
+
+### 关键教训
+
+1. **源码更新后必须重新编译 `npx tsc`** — dist/ 不在 git 跟踪中，PM2 从 dist/ 加载，源文件和编译产物可能不同步
+2. **不要用 `process.cwd()` 定位数据文件** — PM2/直接 node/ts-node 的 cwd 各不相同，应用 `import.meta.url` + `__dirname` 相对定位
+3. **PM2 环境变量中 `cwd`/`PWD` 决定 process.cwd()** — `pm2 env 0` 可查看
+
+---
+
 ## 当前数据
 
 `server/db.json`:
@@ -119,6 +140,7 @@ metadata:
 5. **发送**: task.targetName → wxBridge.send(targetName, content, targetType)
 6. **认证**: 任意 username + 明文→bcrypt 自动迁移 + JWT 7d
 7. **导入导出**: GET/POST /api/data/{export,import}，一个 JSON
+8. **DB 路径**: `import.meta.url` + `__dirname` + `..` 定位，不依赖 `process.cwd()`
 
 ---
 
@@ -126,8 +148,7 @@ metadata:
 
 | P | 任务 |
 |:--|------|
-| 0 | 启动验证: start.bat→登录→扫描→创建任务→确认发送 |
-| 1 | 导入 9 个旧模板 + 每个配置目标群 |
-| 2 | 全链路验证: 通讯录/定时/周期任务/断开恢复 |
-| 3 | 部署 43.153.88.215 |
-| 4 | 更新 CLAUDE.md + README.md |
+| 0 | ~~启动验证: start.bat→登录→扫描→创建任务→确认发送~~ ✅ 2026-06-02 |
+| 1 | ~~部署 39.106.127.176~~ ✅ 2026-06-02 / 域名 wechat.eastpolar.top |
+| 2 | 导入 9 个旧模板 + 每个配置目标群 |
+| 3 | 全链路验证: 通讯录/定时/周期任务/断开恢复 |

@@ -107,6 +107,19 @@ wx4py fork 已修改为使用 comtypes `FindAll` 绕过微信 4.1 的 GetChildre
 - SPI 屏幕阅读器标志 + RunningState 注册表键由 bridge.py 自动维护
 - `find_control()` 在 WeChat 4.x 上自动使用 FindAll 绕过
 
+## 源码修改后部署
+
+```powershell
+# 1. 重新编译 TypeScript（重要！dist/ 不在 git 跟踪中）
+cd C:\Users\Administrator\WxWorkSchedule\server
+npx tsc
+
+# 2. 重启 PM2 加载新代码
+pm2 restart wx-schedule
+```
+
+> **警告**：修改 `server/src/*.ts` 源文件后必须重新 `npx tsc` 编译，否则 PM2 仍运行旧的 dist/ 代码，导致"源码改了但功能不变"的诡异 bug。
+
 ## 常用命令
 
 ```powershell
@@ -127,7 +140,7 @@ curl -X POST http://localhost:39800/recover
 
 1. **网页打不开** → 检查 `tasklist /fi "imagename eq node.exe"`，如无进程则 PM2 restart
 2. **微信未连接** → Bridge 是否在桌面会话中运行？VNC 是否断开？
-3. **数据丢失** → 检查 `server/db.json` 是否存在且有内容（正常约 220KB）
+3. **数据丢失** → 检查 `server/db.json` 是否存在且有内容（正常约 220KB）。同时确认 PM2 日志中 `[DB] Initializing at` 路径指向 `server/db.json` 而非 `server/dist/db.json`
 4. **密码错误** → 检查 `server/dist/.user` 文件，格式为 `{"用户名":"密码"}`
 5. **API 返回 Unauthorized** → 刷新页面重新登录获取新 token
 
