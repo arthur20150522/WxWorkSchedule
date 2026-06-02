@@ -108,6 +108,8 @@ metadata:
 - **21:50** **修复** 改为 `import.meta.url` + `__dirname` + `'..'` 定位 → `path.resolve(__dirname, '..', 'db.json')` — 始终指向 server/db.json，不受 cwd 影响
 - **21:55** 远程重新编译 + PM2 restart → DB 路径正确指向 server/db.json ✅ → 数据恢复
 - **22:00** 远程 git commit `9b418a6` + 本地 git commit `02d438d` — fix: DB path use import.meta.url instead of process.cwd()
+- **22:30** **BUG** Dashboard "尝试登录"按钮报 404 → 前端调 `POST /api/bridge/recover`，Node API 缺少该路由 → bridge.py 有 `/recover` 端点但未代理
+- **22:35** **修复** `wxBridge.ts` 新增 `recover()` 方法 → `api.ts` 新增 `POST /bridge/recover` 路由 → CLAUDE.md 新增部署流程规则(git only, 禁止 scp) → git push → 远程 git pull + tsc + pm2 restart
 
 ### 关键教训
 

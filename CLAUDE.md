@@ -109,6 +109,7 @@ cd client && npx tsc --noEmit   # 前端
 | POST | `/api/login` | { username, password } → { token } |
 | GET | `/api/status` | Bot 状态 + 队列 + taskStats |
 | POST | `/api/bot/restart` | 重启 bridge |
+| POST | `/api/bridge/recover` | 触发微信自动恢复（关弹窗+点登录） |
 | GET/POST/PUT/DELETE | `/api/contacts` | 通讯录 CRUD |
 | GET | `/api/contacts/scan?q=` | 扫描微信通讯录 |
 | GET/POST/PUT/DELETE | `/api/templates` | 模板 CRUD |
