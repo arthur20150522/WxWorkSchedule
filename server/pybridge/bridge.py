@@ -32,19 +32,9 @@ AUTO_RECOVER_ENABLED = True
 AUTO_RECOVER_INTERVAL = 300  # 5 minutes
 
 def try_auto_recover():
-    """Check if WeChat needs recovery: dismiss popups, click login."""
+    """Pure Win32 recovery: dismiss popups then click login — no COM/UIA needed, works cross-session."""
     try:
-        import pythoncom
-        pythoncom.CoInitialize()
-        import comtypes.client as cc
-        import comtypes.gen.UIAutomationClient as UIA
-        import ctypes, pyperclip, win32con
-        
-        uia_client = cc.CreateObject(
-            '{ff48dba4-60ef-4201-aa87-54103eef594e}',
-            interface=UIA.IUIAutomation,
-        )
-        condition = uia_client.CreateTrueCondition()
+        import ctypes, win32gui, win32con, time
         
         def click_at(cx, cy):
             ctypes.windll.user32.SetCursorPos(cx, cy)
@@ -54,107 +44,79 @@ def try_auto_recover():
             ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
             time.sleep(0.15)
         
-        # ── Step 0: Find WeChat window and dismiss internal "提示"/"你已退出微信" popup ──
-        wx = get_wx()
-        hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
-        
-        # Also try finding WeChat window via class name
-        if not hwnd:
-            import win32gui
-            def find_wechat_win(h, _):
-                nonlocal hwnd
-                c = win32gui.GetClassName(h)
-                if 'mmui' in c and win32gui.IsWindowVisible(h):
-                    hwnd = h; return False
-                return True
-            CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-            ctypes.windll.user32.EnumWindows(CB(find_wechat_win), 0)
+        # ── Find WeChat HWND via win32gui (works cross-session) ──
+        hwnd = 0
+        def find_wechat(h, _):
+            nonlocal hwnd
+            c = win32gui.GetClassName(h)
+            if 'mmui' in c and win32gui.IsWindowVisible(h):
+                hwnd = h; return False
+            return True
+        CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        ctypes.windll.user32.EnumWindows(CB(find_wechat), 0)
         
         if not hwnd:
+            log.debug('[recover] No visible WeChat window')
             return
         
-        # Scan WeChat window's UIA tree for popup elements
+        title = win32gui.GetWindowText(hwnd) or ''
+        class_name = win32gui.GetClassName(hwnd) or ''
+        log.info(f'[recover] WeChat: HWND={hwnd} title={title} class={class_name}')
+        
+        # ── Strategy: use UIA first (if available), then pure Win32 fallback ──
+        try_clicked = False
+        
+        # Try UIA FindAll first (requires same session)
         try:
-            elem = uia_client.ElementFromHandle(hwnd)
-            all_e = elem.FindAll(UIA.TreeScope_Subtree, condition)
+            import pythoncom; pythoncom.CoInitialize()
+            import comtypes.client as cc
+            import comtypes.gen.UIAutomationClient as UIA
+            uia = cc.CreateObject('{ff48dba4-60ef-4201-aa87-54103eef594e}', interface=UIA.IUIAutomation)
+            elem = uia.ElementFromHandle(hwnd)
+            all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
             
-            # Check for "我知道了" dismiss button
+            # Step A: dismiss "我知道了" popup
             for i in range(all_e.Length):
                 e = all_e.GetElement(i)
-                n = e.CurrentName or ''
-                c = e.CurrentClassName or ''
-                if n == '我知道了' and ('Button' in c or 'btn' in c.lower() or 'mmui' in c):
+                n = e.CurrentName or ''; c = e.CurrentClassName or ''
+                if n == '我知道了' and ('Button' in c or 'mmui' in c):
                     br = e.CurrentBoundingRectangle
-                    cx = (br.left + br.right) // 2
-                    cy = (br.top + br.bottom) // 2
-                    log.info(f'[recover] Dismissing popup: click "我知道了" at ({cx},{cy})')
-                    click_at(cx, cy)
-                    time.sleep(1)
+                    cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
+                    log.info(f'[recover] UIA: click "我知道了" at ({cx},{cy})')
+                    click_at(cx, cy); time.sleep(1)
                     break
             
-            # Check if "你已退出微信" content exists → popup was present
+            # Step B: click "进入微信" / "登录"
             for i in range(all_e.Length):
                 e = all_e.GetElement(i)
                 n = e.CurrentName or ''
-                if '你已退出微信' in n:
-                    log.info(f'[recover] Detected "你已退出微信" popup, dismissed')
+                if n in ('登录', '进入微信'):
+                    br = e.CurrentBoundingRectangle
+                    cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
+                    log.info(f'[recover] UIA: click "{n}" at ({cx},{cy})')
+                    click_at(cx, cy)
+                    try_clicked = True
                     break
         except Exception as e:
-            log.debug(f'[recover] Popup scan error: {e}')
+            log.debug(f'[recover] UIA failed (expected if session mismatch): {e}')
         
-        # ── Step 1: Check WeChat connection ──
-        wx = get_wx()
-        if not wx.is_connected:
-            log.info('[recover] WeChat disconnected, reconnecting...')
-            wx.connect()
-            return
-
-        hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
-        if not hwnd:
-            return
-
-        # ── Step 2: Check if on login page ──
-        try:
-            title = wx._window.title or ''
-        except:
-            title = ''
-        
-        if '登录' not in title and '登錄' not in title and 'login' not in title.lower():
-            return  # All good
-
-        log.info(f'[recover] Detected login page, attempting auto-login...')
-        
-        elem = uia_client.ElementFromHandle(hwnd)
-        condition = uia_client.CreateTrueCondition()
-        all_e = elem.FindAll(UIA.TreeScope_Subtree, condition)
-        
-        for i in range(all_e.Length):
-            e = all_e.GetElement(i)
-            n = e.CurrentName or ''
-            if n == '登录' or n == '进入微信':
-                br = e.CurrentBoundingRectangle
-                cx = (br.left + br.right) // 2
-                cy = (br.top + br.bottom) // 2
-                log.info(f'[recover] Clicking 登录 at ({cx},{cy})')
-                ctypes.windll.user32.SetCursorPos(cx, cy)
-                time.sleep(0.1)
-                ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
-                time.sleep(0.05)
-                ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
-                log.info('[recover] Login button clicked — waiting for phone approval...')
-                return
-        
-        # Tab+Enter fallback
-        log.info('[recover] Login button not found, Tab+Enter...')
-        ctypes.windll.user32.SetForegroundWindow(hwnd)
-        time.sleep(0.5)
-        for _ in range(8):
-            ctypes.windll.user32.keybd_event(0x09, 0, 0, 0); time.sleep(0.15)
-            ctypes.windll.user32.keybd_event(0x09, 0, win32con.KEYEVENTF_KEYUP, 0); time.sleep(0.1)
-        ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0); time.sleep(0.1)
-        ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
-        log.info('[recover] Tab+Enter sent')
-        
+        # ── Pure Win32 fallback: Tab + Enter ──
+        if not try_clicked and ('登录' in title or 'Login' in class_name or 'MainWindow' not in class_name):
+            log.info('[recover] Using Win32 Tab+Enter fallback...')
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            time.sleep(0.5)
+            # Try clicking center first (often the login button is there)
+            rect = win32gui.GetWindowRect(hwnd)
+            cx = (rect[0]+rect[2])//2; cy = (rect[1]+rect[3])//2
+            click_at(cx, cy + 50)  # slightly below center
+            time.sleep(0.5)
+            # Tab to navigate + Enter
+            for _ in range(8):
+                ctypes.windll.user32.keybd_event(0x09, 0, 0, 0); time.sleep(0.15)
+                ctypes.windll.user32.keybd_event(0x09, 0, win32con.KEYEVENTF_KEYUP, 0); time.sleep(0.1)
+            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0); time.sleep(0.1)
+            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
+            log.info('[recover] Tab+Enter sent')
     except Exception as e:
         log.error(f'[recover] Error: {e}')
 
@@ -282,17 +244,25 @@ class BridgeHandler(BaseHTTPRequestHandler):
             
             return ('unknown', f'无法判断状态: {total}个节点')
         except Exception as e:
-            return ('fatal', str(e))
+            # COM/UIA failed (likely session isolation) — fallback to win32gui only
+            import win32gui
+            try:
+                title = win32gui.GetWindowText(hwnd) or ''
+                class_name = win32gui.GetClassName(hwnd) or ''
+                visible = win32gui.IsWindowVisible(hwnd)
+                if not visible:
+                    return ('not_running', '微信窗口不可见（VNC可能断开）')
+                if '登录' in title or 'Login' in class_name:
+                    return ('login', f'登录页面（win32 fallback）: {title}')
+                if 'MainWindow' in class_name:
+                    return ('ok', '正常 — 主界面已就绪（win32 fallback）')
+                return ('ok', f'窗口存在（win32 fallback）: {title}')
+            except:
+                return ('fatal', str(e))
     
     def _get_wechat_hwnd(self):
-        """Get WeChat window HWND, trying multiple approaches."""
-        try:
-            wx = get_wx()
-            if wx.is_connected:
-                return wx._window.hwnd
-        except:
-            pass
-        # Fallback: win32gui enumeration
+        """Get WeChat window HWND. Use win32gui first (works across sessions), then uiautomation."""
+        # Strategy 1: win32gui EnumWindows (works even in session 0)
         import win32gui, ctypes
         result = [0]
         def cb(h, _):
@@ -302,7 +272,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return True
         CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
         ctypes.windll.user32.EnumWindows(CB(cb), 0)
-        return result[0] or 0
+        if result[0]:
+            return result[0]
+        # Strategy 2: wx4py uiautomation (only works in console session)
+        try:
+            wx = get_wx()
+            if wx.is_connected:
+                return wx._window.hwnd
+        except:
+            pass
+        return 0
     
     def _handle_status(self):
         try:
