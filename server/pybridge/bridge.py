@@ -265,12 +265,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return ('fatal', str(e))
     
     def _get_wechat_hwnd(self):
-        """Get WeChat window HWND via win32gui only (no COM, works cross-session)."""
+        """Get WeChat window HWND via win32gui only (no COM, works cross-session, includes hidden windows)."""
         import win32gui, ctypes
         result = [0]
         def cb(h, _):
             c = win32gui.GetClassName(h)
-            if 'mmui' in c and win32gui.IsWindowVisible(h):
+            if 'mmui' in c:
                 result[0] = h; return False
             return True
         CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
@@ -308,11 +308,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             hwnd = self._get_wechat_hwnd()
             if not hwnd:
                 self._send({'ok': False, 'reason': '无微信窗口句柄', 'stage': 'hwnd'})
-                return
-            
-            from wx4py.core.win32 import is_window_visible
-            if not is_window_visible(hwnd):
-                self._send({'ok': False, 'reason': '微信窗口不可见', 'stage': 'visible'})
                 return
             
             state, detail = self._check_wechat_ui_state(hwnd)
