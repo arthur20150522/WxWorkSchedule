@@ -68,6 +68,7 @@ def try_auto_recover():
         try_clicked = False
         
         # Try UIA FindAll first (requires same session)
+        popup_dismissed = False
         try:
             import pythoncom; pythoncom.CoInitialize()
             import comtypes.client as cc
@@ -75,7 +76,7 @@ def try_auto_recover():
             uia = cc.CreateObject('{ff48dba4-60ef-4201-aa87-54103eef594e}', interface=UIA.IUIAutomation)
             elem = uia.ElementFromHandle(hwnd)
             all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
-            
+
             # Step A: dismiss "我知道了" popup
             for i in range(all_e.Length):
                 e = all_e.GetElement(i)
@@ -85,8 +86,9 @@ def try_auto_recover():
                     cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
                     log.info(f'[recover] UIA: click "我知道了" at ({cx},{cy})')
                     click_at(cx, cy); time.sleep(1)
+                    popup_dismissed = True
                     break
-            
+
             # Step B: click "进入微信" / "登录"
             for i in range(all_e.Length):
                 e = all_e.GetElement(i)
@@ -100,10 +102,11 @@ def try_auto_recover():
                     break
         except Exception as e:
             log.debug(f'[recover] UIA failed (expected if session mismatch): {e}')
-        
-        # ── Pure Win32 fallback: dismiss popup, then Tab + Enter ──
-        # UIA can fail cross-session; Win32 fallback works anywhere
-        if not try_clicked:
+
+        # ── Pure Win32 fallback ──
+        # Only use Win32 if UIA couldn't handle it (cross-session or UIA not finding elements).
+        # If UIA already dismissed the popup, don't blindly Tab+Enter — we might land on wrong button.
+        if not try_clicked and not popup_dismissed:
             log.info('[recover] Using Win32 fallback...')
             ctypes.windll.user32.SetForegroundWindow(hwnd)
             time.sleep(0.5)
@@ -118,6 +121,8 @@ def try_auto_recover():
             ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0); time.sleep(0.1)
             ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
             log.info('[recover] Win32 Enter+Tab+Enter sent')
+        elif popup_dismissed and not try_clicked:
+            log.info('[recover] Popup dismissed by UIA, skipping Win32 fallback (user can click login manually or trigger recover again)')
     except Exception as e:
         log.error(f'[recover] Error: {e}')
 
