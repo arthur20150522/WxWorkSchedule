@@ -1,11 +1,13 @@
 """
 wx4py bridge — lightweight HTTP wrapper for WeChat Windows automation.
 Runs on 127.0.0.1:39800 so the Node.js backend can call it locally.
-Designed for minimal resource usage (2C2G server).
+Auto-recovers from 6am kick-off: detects login page, clicks "进入微信".
 """
 import sys
 import json
 import logging
+import threading
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -23,6 +25,92 @@ def get_wx():
         _wx = WeChatClient(auto_connect=True)
         log.info(f'Connected: {_wx.is_connected}')
     return _wx
+
+
+# ── Auto-recovery: detect login page and click "进入微信" ─────────────
+AUTO_RECOVER_ENABLED = True
+AUTO_RECOVER_INTERVAL = 300  # 5 minutes
+
+def try_auto_recover():
+    """Check if WeChat is on login page, try to click login button."""
+    try:
+        wx = get_wx()
+        if not wx.is_connected:
+            log.info('[recover] WeChat disconnected, reconnecting...')
+            wx.connect()
+            return
+
+        hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
+        if not hwnd:
+            return
+
+        # Check if on login page via window title
+        try:
+            title = wx._window.title or ''
+        except:
+            title = ''
+        
+        if '登录' not in title and '登錄' not in title and 'login' not in title.lower():
+            return  # Not on login page, all good
+
+        log.info(f'[recover] Detected login page, attempting auto-login...')
+        
+        # Use comtypes FindAll to find and click login button
+        import pythoncom
+        pythoncom.CoInitialize()
+        import comtypes.client as cc
+        import comtypes.gen.UIAutomationClient as UIA
+        
+        uia = cc.CreateObject(
+            '{ff48dba4-60ef-4201-aa87-54103eef594e}',
+            interface=UIA.IUIAutomation,
+        )
+        elem = uia.ElementFromHandle(hwnd)
+        condition = uia.CreateTrueCondition()
+        all_e = elem.FindAll(UIA.TreeScope_Subtree, condition)
+        
+        import ctypes, pyperclip, win32con
+        
+        for i in range(all_e.Length):
+            e = all_e.GetElement(i)
+            n = e.CurrentName or ''
+            if n == '登录':
+                br = e.CurrentBoundingRectangle
+                cx = (br.left + br.right) // 2
+                cy = (br.top + br.bottom) // 2
+                log.info(f'[recover] Clicking 登录 at ({cx},{cy})')
+                ctypes.windll.user32.SetCursorPos(cx, cy)
+                time.sleep(0.1)
+                ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
+                time.sleep(0.05)
+                ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
+                log.info('[recover] Login button clicked — waiting for phone approval...')
+                return
+        
+        # Tab+Enter fallback
+        log.info('[recover] Login button not found via UIA, trying Tab+Enter...')
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+        time.sleep(0.5)
+        for _ in range(8):
+            ctypes.windll.user32.keybd_event(0x09, 0, 0, 0); time.sleep(0.15)
+            ctypes.windll.user32.keybd_event(0x09, 0, win32con.KEYEVENTF_KEYUP, 0); time.sleep(0.1)
+        ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0); time.sleep(0.1)
+        ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
+        log.info('[recover] Tab+Enter sent')
+        
+    except Exception as e:
+        log.error(f'[recover] Error: {e}')
+
+
+def _auto_recover_loop():
+    """Background thread: periodically check and recover."""
+    log.info(f'[recover] Auto-recovery enabled, checking every {AUTO_RECOVER_INTERVAL}s')
+    while AUTO_RECOVER_ENABLED:
+        time.sleep(AUTO_RECOVER_INTERVAL)
+        try:
+            try_auto_recover()
+        except Exception as e:
+            log.error(f'[recover] Loop error: {e}')
 
 
 # ── HTTP handler ──────────────────────────────────────────────────────
@@ -63,6 +151,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_health()
             elif path == '/deep-health':
                 self._handle_deep_health()
+            elif path == '/recover':
+                self._handle_recover()
             else:
                 self._send({'error': 'not found'}, 404)
         except Exception as e:
@@ -112,9 +202,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'ok': False, 'error': str(e)})
 
     def _handle_deep_health(self):
-        """Deep health: check if WeChat UI is usable.
-        Uses only lightweight Win32 calls — no UIA tree traversal, no search, no input simulation.
-        """
+        """Deep health: check if WeChat UI is usable."""
         try:
             wx = get_wx()
             hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
@@ -127,7 +215,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send({'ok': False, 'reason': '微信窗口不可见', 'stage': 'visible'})
                 return
 
-            # Check window title: login page shows "微信登录" or similar
             try:
                 title = wx._window.title or ''
                 if '登录' in title or '登錄' in title or 'login' in title.lower():
@@ -136,10 +223,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
             except:
                 pass
 
-            # Window visible + title not login → assume good
             self._send({'ok': True, 'reason': '正常', 'stage': 'ok'})
         except Exception as e:
             self._send({'ok': False, 'reason': f'健康检查异常: {e}', 'stage': 'fatal'})
+
+    def _handle_recover(self):
+        """Manual trigger: run auto-recovery now."""
+        try:
+            threading.Thread(target=try_auto_recover, daemon=True).start()
+            self._send({'ok': True, 'message': '恢复已触发'})
+        except Exception as e:
+            self._send({'ok': False, 'error': str(e)})
 
     def _handle_search(self, qs):
         q = qs.get('q', [''])[0]
@@ -317,6 +411,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 39800
+    # Start auto-recovery background thread
+    recover_thread = threading.Thread(target=_auto_recover_loop, daemon=True)
+    recover_thread.start()
     server = HTTPServer(('127.0.0.1', port), BridgeHandler)
     log.info(f'Bridge listening on 127.0.0.1:{port}')
     try:
