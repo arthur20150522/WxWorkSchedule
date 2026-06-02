@@ -1,7 +1,10 @@
 import fs from 'fs';
 import path from 'path';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import bcrypt from 'bcrypt';
-const USER_CONFIG_PATH = path.resolve(process.cwd(), '.user');
+const USER_CONFIG_PATH = path.resolve(__dirname, '.user');
 // Ensure config exists
 if (!fs.existsSync(USER_CONFIG_PATH)) {
     // User requested to remove default account creation
@@ -48,7 +51,7 @@ export class UserManager {
         return false;
     }
     static getUserDir(username) {
-        const dir = path.resolve(process.cwd(), 'users', username);
+        const dir = path.resolve(__dirname, '..', 'users', username);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }

@@ -1,8 +1,11 @@
 import fs from 'fs';
 import path from 'path';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
-const USER_CONFIG_PATH = path.resolve(process.cwd(), '.user');
+const USER_CONFIG_PATH = path.resolve(__dirname, '.user');
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
     throw new Error('JWT_SECRET is not defined in environment variables');
