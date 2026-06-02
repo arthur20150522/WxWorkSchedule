@@ -38,44 +38,69 @@ def try_auto_recover():
         pythoncom.CoInitialize()
         import comtypes.client as cc
         import comtypes.gen.UIAutomationClient as UIA
-        import ctypes, pyperclip, win32con, win32gui
+        import ctypes, pyperclip, win32con
         
-        # ── Step 0: Dismiss "提示" / "你已退出微信" popup if present ──
         uia_client = cc.CreateObject(
             '{ff48dba4-60ef-4201-aa87-54103eef594e}',
             interface=UIA.IUIAutomation,
         )
+        condition = uia_client.CreateTrueCondition()
         
-        # Enumerate all top-level windows to find "提示" dialog
-        def find_popup(hwnd, _):
-            title = win32gui.GetWindowText(hwnd)
-            cls = win32gui.GetClassName(hwnd)
-            if ('提示' in title or '退出' in title) and win32gui.IsWindowVisible(hwnd):
-                log.info(f'[recover] Found popup: HWND={hwnd} title={title} class={cls}')
-                try:
-                    elem = uia_client.ElementFromHandle(hwnd)
-                    condition = uia_client.CreateTrueCondition()
-                    all_e = elem.FindAll(UIA.TreeScope_Subtree, condition)
-                    for i in range(all_e.Length):
-                        e = all_e.GetElement(i)
-                        n = e.CurrentName or ''
-                        if '我知道了' in n or '确定' in n or 'OK' in n:
-                            br = e.CurrentBoundingRectangle
-                            cx = (br.left + br.right) // 2
-                            cy = (br.top + br.bottom) // 2
-                            log.info(f'[recover] Clicking "{n}" at ({cx},{cy})')
-                            ctypes.windll.user32.SetCursorPos(cx, cy)
-                            time.sleep(0.1)
-                            ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
-                            time.sleep(0.05)
-                            ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
-                            return True
-                except Exception as e:
-                    log.debug(f'[recover] Popup UIA failed: {e}')
-            return True
+        def click_at(cx, cy):
+            ctypes.windll.user32.SetCursorPos(cx, cy)
+            time.sleep(0.05)
+            ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
+            time.sleep(0.03)
+            ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
+            time.sleep(0.15)
         
-        CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-        ctypes.windll.user32.EnumWindows(CB(find_popup), 0)
+        # ── Step 0: Find WeChat window and dismiss internal "提示"/"你已退出微信" popup ──
+        wx = get_wx()
+        hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
+        
+        # Also try finding WeChat window via class name
+        if not hwnd:
+            import win32gui
+            def find_wechat_win(h, _):
+                nonlocal hwnd
+                c = win32gui.GetClassName(h)
+                if 'mmui' in c and win32gui.IsWindowVisible(h):
+                    hwnd = h; return False
+                return True
+            CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+            ctypes.windll.user32.EnumWindows(CB(find_wechat_win), 0)
+        
+        if not hwnd:
+            return
+        
+        # Scan WeChat window's UIA tree for popup elements
+        try:
+            elem = uia_client.ElementFromHandle(hwnd)
+            all_e = elem.FindAll(UIA.TreeScope_Subtree, condition)
+            
+            # Check for "我知道了" dismiss button
+            for i in range(all_e.Length):
+                e = all_e.GetElement(i)
+                n = e.CurrentName or ''
+                c = e.CurrentClassName or ''
+                if n == '我知道了' and 'Button' in c:
+                    br = e.CurrentBoundingRectangle
+                    cx = (br.left + br.right) // 2
+                    cy = (br.top + br.bottom) // 2
+                    log.info(f'[recover] Dismissing popup: click "我知道了" at ({cx},{cy})')
+                    click_at(cx, cy)
+                    time.sleep(1)
+                    break
+            
+            # Check if "你已退出微信" content exists → popup was present
+            for i in range(all_e.Length):
+                e = all_e.GetElement(i)
+                n = e.CurrentName or ''
+                if '你已退出微信' in n:
+                    log.info(f'[recover] Detected "你已退出微信" popup, dismissed')
+                    break
+        except Exception as e:
+            log.debug(f'[recover] Popup scan error: {e}')
         
         # ── Step 1: Check WeChat connection ──
         wx = get_wx()
@@ -206,56 +231,122 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'error': str(e)}, 500)
 
     # ── handlers ──────────────────────────────────────────────────
-    def _handle_status(self):
+    def _check_wechat_ui_state(self, hwnd):
+        """Real UIA scan: what is WeChat actually showing? Returns (state, detail)."""
+        import pythoncom
+        pythoncom.CoInitialize()
+        import comtypes.client as cc
+        import comtypes.gen.UIAutomationClient as UIA
+        
+        try:
+            uia = cc.CreateObject(
+                '{ff48dba4-60ef-4201-aa87-54103eef594e}',
+                interface=UIA.IUIAutomation,
+            )
+            elem = uia.ElementFromHandle(hwnd)
+            condition = uia.CreateTrueCondition()
+            all_e = elem.FindAll(UIA.TreeScope_Subtree, condition)
+            
+            has_login_btn = False
+            has_popup_dismiss = False  # "我知道了"
+            has_popup_content = False  # "你已退出微信"
+            has_search = False
+            has_chat_input = False
+            
+            for i in range(all_e.Length):
+                e = all_e.GetElement(i)
+                n = e.CurrentName or ''
+                c = e.CurrentClassName or ''
+                
+                if n == '登录':
+                    has_login_btn = True
+                if n == '我知道了' and 'Button' in c:
+                    has_popup_dismiss = True
+                if '你已退出微信' in n:
+                    has_popup_content = True
+                if n == '搜索':
+                    has_search = True
+                if c == 'mmui::ChatInputField':
+                    has_chat_input = True
+            
+            if has_popup_dismiss or has_popup_content:
+                return ('popup', '有"你已退出微信"弹窗，需点击"我知道了"')
+            if has_login_btn:
+                return ('login', '登录页面，需点击"登录"按钮')
+            if has_search or has_chat_input:
+                return ('ok', '正常 — 主界面已就绪')
+            return ('unknown', f'无法判断状态: {all_e.Length}个节点')
+        except Exception as e:
+            return ('fatal', str(e))
+    
+    def _get_wechat_hwnd(self):
+        """Get WeChat window HWND, trying multiple approaches."""
         try:
             wx = get_wx()
-            connected = wx.is_connected
-            if not connected:
-                # Double-check: maybe UIA is fine but is_connected flag is stale
-                try:
-                    hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
-                    if hwnd:
-                        from wx4py.core.win32 import is_window_visible
-                        if is_window_visible(hwnd):
-                            connected = True
-                except:
-                    pass
-            self._send({'connected': connected, 'error': None})
+            if wx.is_connected:
+                return wx._window.hwnd
+        except:
+            pass
+        # Fallback: win32gui enumeration
+        import win32gui, ctypes
+        result = [0]
+        def cb(h, _):
+            c = win32gui.GetClassName(h)
+            if 'mmui' in c and win32gui.IsWindowVisible(h):
+                result[0] = h; return False
+            return True
+        CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        ctypes.windll.user32.EnumWindows(CB(cb), 0)
+        return result[0] or 0
+    
+    def _handle_status(self):
+        try:
+            hwnd = self._get_wechat_hwnd()
+            if not hwnd:
+                self._send({'connected': False, 'error': '微信未运行', 'state': 'not_running'})
+                return
+            
+            state, detail = self._check_wechat_ui_state(hwnd)
+            
+            if state == 'ok':
+                self._send({'connected': True, 'error': None, 'state': state, 'detail': detail, 'hwnd': hwnd})
+            else:
+                self._send({'connected': False, 'error': detail, 'state': state, 'detail': detail, 'hwnd': hwnd})
         except Exception as e:
-            self._send({'connected': False, 'error': str(e)})
-
+            self._send({'connected': False, 'error': str(e), 'state': 'fatal'})
+    
     def _handle_health(self):
         """Quick health: is the process alive and window exists?"""
         try:
             wx = get_wx()
-            hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
-            self._send({'ok': True, 'hwnd': hwnd, 'connected': wx.is_connected})
+            hwnd = self._get_wechat_hwnd()
+            self._send({'ok': bool(hwnd), 'hwnd': hwnd, 'connected': wx.is_connected})
         except Exception as e:
             self._send({'ok': False, 'error': str(e)})
-
+    
     def _handle_deep_health(self):
-        """Deep health: check if WeChat UI is usable."""
+        """Deep health: real UIA scan for accurate WeChat state."""
         try:
-            wx = get_wx()
-            hwnd = wx._window.hwnd if hasattr(wx, '_window') and wx._window else None
+            hwnd = self._get_wechat_hwnd()
             if not hwnd:
                 self._send({'ok': False, 'reason': '无微信窗口句柄', 'stage': 'hwnd'})
                 return
-
+            
             from wx4py.core.win32 import is_window_visible
             if not is_window_visible(hwnd):
                 self._send({'ok': False, 'reason': '微信窗口不可见', 'stage': 'visible'})
                 return
-
-            try:
-                title = wx._window.title or ''
-                if '登录' in title or '登錄' in title or 'login' in title.lower():
-                    self._send({'ok': False, 'reason': '微信登录页-需重新扫码', 'stage': 'login_page'})
-                    return
-            except:
-                pass
-
-            self._send({'ok': True, 'reason': '正常', 'stage': 'ok'})
+            
+            state, detail = self._check_wechat_ui_state(hwnd)
+            
+            if state == 'ok':
+                self._send({'ok': True, 'reason': detail, 'stage': 'ok'})
+            elif state in ('popup', 'login'):
+                self._send({'ok': False, 'reason': detail, 'stage': state})
+                # Auto-trigger recovery
+                threading.Thread(target=try_auto_recover, daemon=True).start()
+            else:
+                self._send({'ok': False, 'reason': detail, 'stage': 'unknown'})
         except Exception as e:
             self._send({'ok': False, 'reason': f'健康检查异常: {e}', 'stage': 'fatal'})
 
