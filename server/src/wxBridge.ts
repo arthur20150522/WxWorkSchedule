@@ -112,6 +112,6 @@ export const wxBridge = {
 
   /** Trigger auto-recovery: dismiss popups, click login button */
   async recover(): Promise<{ ok: boolean; message?: string; error?: string }> {
-    return fetchBridge('/recover', { method: 'POST' });
+    return fetchBridge('/recover');
   },
 };
