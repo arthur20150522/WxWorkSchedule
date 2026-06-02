@@ -29,6 +29,31 @@
 
 ---
 
+## 部署流程（严格遵守！）
+
+**所有本地与远程之间的代码同步必须通过 git，禁止 scp / 手动上传文件。**
+
+```
+本地修改 → git add + commit → git push origin fork4win
+    ↓
+远程服务器 → git pull origin fork4win → npx tsc → pm2 restart wx-schedule
+```
+
+规则：
+1. **禁止 scp 传文件** — 所有变更必须经过 git 留档，确保本地和远程代码一致
+2. **禁止直接改远程文件** — 任何代码修改都从本地发起，git push 后再从远程拉取
+3. **远程只做：pull + tsc + pm2 restart** — 不在远程直接编辑源文件
+4. 每次部署后确认远程 pm2 状态和日志正常
+
+远程服务器：
+- IP: `39.106.127.176`
+- 用户: `Administrator` (SSH key 认证)
+- 项目路径: `C:\Users\Administrator\WxWorkSchedule`
+- PM2 进程名: `wx-schedule`
+- 域名: `wechat.eastpolar.top` (nginx → :3000)
+
+---
+
 ## 项目概览
 
 WxSchedule — 微信定时消息机器人。wx4py (Windows UI Automation) + React 管理后台。

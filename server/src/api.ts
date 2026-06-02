@@ -126,6 +126,19 @@ apiRouter.post('/bot/restart', async (req, res) => {
   }
 });
 
+// Trigger bridge auto-recovery (dismiss popups, click login)
+apiRouter.post('/bridge/recover', async (_req, res) => {
+  try {
+    const result = await wxBridge.recover();
+    await addLog('info', `Bridge recover triggered: ${result.message || 'ok'}`);
+    res.json({ success: true, message: result.message || '恢复已触发' });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await addLog('error', `Bridge recover failed: ${msg}`);
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
 // ── Contacts (通讯录 CRUD) ───────────────────────────────
 apiRouter.get('/contacts', async (_req, res) => {
   try {
