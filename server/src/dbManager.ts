@@ -2,11 +2,14 @@ import { JSONFilePreset } from 'lowdb/node';
 import { Low } from 'lowdb';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { Data, Task, Template, Contact, Log, LiveLog } from './types.js';
 
 export type { Task, Template, Contact, Log, LiveLog, Data };
 
-const DB_PATH = path.resolve(process.cwd(), 'db.json');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DB_PATH = path.resolve(__dirname, '..', 'db.json');
 const MAX_LOG_ENTRIES = 500;
 
 const defaultData: Data = {
