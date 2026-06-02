@@ -1,53 +1,40 @@
 import { JSONFilePreset } from 'lowdb/node';
 import path from 'path';
-import { UserManager } from './userManager.js';
-const defaultData = { tasks: [], templates: [], logs: [] };
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DB_PATH = path.resolve(__dirname, '..', 'db.json');
+const defaultData = { tasks: [], templates: [], contacts: [], logs: [], liveLogs: [] };
+
 export class DBManager {
-    static instances = new Map();
-    static async getDb(username) {
-        if (this.instances.has(username)) {
-            return this.instances.get(username);
-        }
-        const userDir = UserManager.getUserDir(username);
-        const dbPath = path.join(userDir, 'db.json');
-        console.log(`Loading DB for ${username} at ${dbPath}`);
-        const db = await JSONFilePreset(dbPath, defaultData);
-        // Ensure templates array exists (migration for old DBs)
-        await db.update((data) => {
-            if (!data.templates) {
-                data.templates = [];
-            }
-            if (!data.tasks) {
-                data.tasks = [];
-            }
-            if (!data.logs) {
-                data.logs = [];
-            }
-            // Migration: Convert string content to string[]
+    static _db = null;
+
+    static async getDb(_username) {
+        if (this._db) return this._db;
+        console.log(`Loading DB from ${DB_PATH}`);
+        this._db = await JSONFilePreset(DB_PATH, defaultData);
+        await this._db.update((data) => {
+            if (!data.templates) data.templates = [];
+            if (!data.tasks) data.tasks = [];
+            if (!data.contacts) data.contacts = [];
+            if (!data.logs) data.logs = [];
+            if (!data.liveLogs) data.liveLogs = [];
             data.tasks.forEach((t) => {
-                if (typeof t.content === 'string') {
-                    t.content = [t.content];
-                }
-                if (typeof t.currentContentIndex === 'undefined') {
-                    t.currentContentIndex = 0;
-                }
-                // Recovery: tasks stuck in 'processing' at startup mean the server
-                // crashed mid-execution — reset them so the scheduler picks them up again.
+                if (typeof t.content === 'string') t.content = [t.content];
+                if (typeof t.currentContentIndex === 'undefined') t.currentContentIndex = 0;
                 if (t.status === 'processing') {
-                    console.log(`[DBManager] Recovering stuck processing task ${t.id} → pending`);
+                    console.log(`[DBManager] Recovering stuck task ${t.id} -> pending`);
                     t.status = 'pending';
                 }
             });
             data.templates.forEach((t) => {
-                if (typeof t.content === 'string') {
-                    t.content = [t.content];
-                }
+                if (typeof t.content === 'string') t.content = [t.content];
             });
         });
-        this.instances.set(username, db);
-        return db;
+        return this._db;
     }
 }
+
 export const addLog = async (username, level, message, taskId) => {
     const db = await DBManager.getDb(username);
     await db.update(({ logs }) => logs.push({
@@ -57,4 +44,8 @@ export const addLog = async (username, level, message, taskId) => {
         message,
         taskId
     }));
+};
+
+export const initDB = async () => {
+    return DBManager.getDb('default');
 };
