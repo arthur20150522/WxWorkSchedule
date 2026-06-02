@@ -83,7 +83,7 @@ def try_auto_recover():
                 e = all_e.GetElement(i)
                 n = e.CurrentName or ''
                 c = e.CurrentClassName or ''
-                if n == '我知道了' and 'Button' in c:
+                if n == '我知道了' and ('Button' in c or 'btn' in c.lower() or 'mmui' in c):
                     br = e.CurrentBoundingRectangle
                     cx = (br.left + br.right) // 2
                     cy = (br.top + br.bottom) // 2
@@ -131,7 +131,7 @@ def try_auto_recover():
         for i in range(all_e.Length):
             e = all_e.GetElement(i)
             n = e.CurrentName or ''
-            if n == '登录':
+            if n == '登录' or n == '进入微信':
                 br = e.CurrentBoundingRectangle
                 cx = (br.left + br.right) // 2
                 cy = (br.top + br.bottom) // 2
@@ -247,35 +247,40 @@ class BridgeHandler(BaseHTTPRequestHandler):
             condition = uia.CreateTrueCondition()
             all_e = elem.FindAll(UIA.TreeScope_Subtree, condition)
             
-            has_login_btn = False
-            has_popup_dismiss = False  # "我知道了"
-            has_popup_content = False  # "你已退出微信"
-            has_search = False
-            has_chat_input = False
+            names = set()
+            class_names = set()
             
             for i in range(all_e.Length):
                 e = all_e.GetElement(i)
-                n = e.CurrentName or ''
+                n = (e.CurrentName or '').strip()
                 c = e.CurrentClassName or ''
-                
-                if n == '登录':
-                    has_login_btn = True
-                if n == '我知道了' and 'Button' in c:
-                    has_popup_dismiss = True
-                if '你已退出微信' in n:
-                    has_popup_content = True
-                if n == '搜索':
-                    has_search = True
-                if c == 'mmui::ChatInputField':
-                    has_chat_input = True
+                if n: names.add(n)
+                if c: class_names.add(c)
             
-            if has_popup_dismiss or has_popup_content:
+            # Check for known states
+            if '我知道了' in names:
                 return ('popup', '有"你已退出微信"弹窗，需点击"我知道了"')
-            if has_login_btn:
-                return ('login', '登录页面，需点击"登录"按钮')
-            if has_search or has_chat_input:
+            if '登录' in names or '进入微信' in names:
+                btn = '登录' if '登录' in names else '进入微信'
+                return ('login', f'登录页面，需点击"{btn}"按钮')
+            if '搜索' in names or 'mmui::ChatInputField' in class_names:
                 return ('ok', '正常 — 主界面已就绪')
-            return ('unknown', f'无法判断状态: {all_e.Length}个节点')
+            if '确认登录' in names or '正在登录' in names:
+                return ('waiting', '等待手机确认登录')
+            if '切换账号' in names or '添加账号' in names:
+                return ('login', '登录页面（账号选择）')
+            
+            # Heuristic: low node count on mmui window = login or transition
+            total = all_e.Length
+            if total < 30:
+                # Check what the nodes are
+                if any('Login' in c for c in class_names):
+                    return ('login', f'登录页面: {total}个节点')
+                if any('MainWindow' in c for c in class_names):
+                    return ('loading', f'主窗口加载中: {total}个节点 (可能刚登录)')
+                return ('unknown', f'未知状态: {total}个节点, 元素: {sorted(names)[:10]}')
+            
+            return ('unknown', f'无法判断状态: {total}个节点')
         except Exception as e:
             return ('fatal', str(e))
     
@@ -341,12 +346,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
             
             if state == 'ok':
                 self._send({'ok': True, 'reason': detail, 'stage': 'ok'})
+            elif state == 'loading':
+                self._send({'ok': False, 'reason': detail, 'stage': 'loading'})
+            elif state == 'waiting':
+                self._send({'ok': False, 'reason': detail, 'stage': 'waiting'})
             elif state in ('popup', 'login'):
                 self._send({'ok': False, 'reason': detail, 'stage': state})
-                # Auto-trigger recovery
+                # Auto-trigger recovery for popup/login
                 threading.Thread(target=try_auto_recover, daemon=True).start()
+                log.info(f'[recover] Auto-triggered for {state}: {detail}')
             else:
                 self._send({'ok': False, 'reason': detail, 'stage': 'unknown'})
+                # Still try recovery for unknown states
+                threading.Thread(target=try_auto_recover, daemon=True).start()
+                log.info(f'[recover] Auto-triggered for unknown: {detail}')
         except Exception as e:
             self._send({'ok': False, 'reason': f'健康检查异常: {e}', 'stage': 'fatal'})
 
