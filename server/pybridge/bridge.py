@@ -6,9 +6,16 @@ Auto-recovers from 6am kick-off: detects login page, clicks "进入微信".
 import sys
 import json
 import logging
+import socket
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingTCPServer
+
+class ThreadingHTTPServer(ThreadingTCPServer, HTTPServer):
+    """Threading HTTP server that handles each request in a separate thread."""
+    daemon_threads = True
+    allow_reuse_address = True
 from urllib.parse import urlparse, parse_qs
 
 logging.basicConfig(level=logging.INFO, format='[bridge] %(message)s')
@@ -16,6 +23,28 @@ log = logging.getLogger(__name__)
 
 # ── wx4py client (lazy init) ──────────────────────────────────────────
 _wx = None
+
+# ── Async task system ─────────────────────────────────────────────────
+_tasks = {}
+_tasks_lock = threading.Lock()
+_task_counter = [0]
+
+def _start_task(fn, *args, **kwargs):
+    """Run fn in background, track by task_id."""
+    with _tasks_lock:
+        _task_counter[0] += 1
+        tid = str(_task_counter[0])
+        _tasks[tid] = {'status': 'pending', 'result': None, 'error': None}
+    def _runner():
+        try:
+            result = fn(*args, **kwargs)
+            with _tasks_lock:
+                _tasks[tid] = {'status': 'success', 'result': result, 'error': None}
+        except Exception as e:
+            with _tasks_lock:
+                _tasks[tid] = {'status': 'failed', 'result': None, 'error': str(e)}
+    threading.Thread(target=_runner, daemon=True).start()
+    return tid
 
 def get_wx():
     global _wx
@@ -222,6 +251,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_deep_health()
             elif path == '/recover':
                 self._handle_recover()
+            elif path.startswith('/task/'):
+                self._handle_task_status(path)
             else:
                 self._send({'error': 'not found'}, 404)
         except Exception as e:
@@ -402,6 +433,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send({'ok': False, 'error': str(e)})
 
+    def _handle_task_status(self, path):
+        """GET /task/<id> — poll async task result."""
+        tid = path.split('/')[-1]
+        with _tasks_lock:
+            task = _tasks.get(tid)
+        if task is None:
+            self._send({'error': 'task not found'}, 404)
+        else:
+            self._send({'task_id': tid, **task})
+
     def _handle_search(self, qs):
         q = qs.get('q', [''])[0]
         target_type = qs.get('type', ['all'])[0]  # 'group', 'contact', or 'all'
@@ -520,21 +561,24 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
 
         # Ensure WeChat window is visible (tray -> restore) before send
-        try:
-            import win32gui, win32con
-            hwnd = self._get_wechat_hwnd()
-            if hwnd and not win32gui.IsWindowVisible(hwnd):
-                log.info('[send] restoring window from tray...')
-                win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
-                import time; time.sleep(1)
-        except Exception as e:
-            log.debug(f'[send] window restore error: {e}')
+        def _do_send():
+            import win32gui, win32con, time as t
+            try:
+                hwnd = self._get_wechat_hwnd()
+                if hwnd and not win32gui.IsWindowVisible(hwnd):
+                    log.info(f'[send] restoring window for {target}...')
+                    win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
+                    t.sleep(1)
+            except Exception as e:
+                log.debug(f'[send] window restore error: {e}')
+            wx = get_wx()
+            ok = wx.chat_window.send_to(target, message, target_type=target_type)
+            log.info(f'[send] to [{target_type}] {target}: {"OK" if ok else "FAIL"}')
+            return ok
 
-        wx = get_wx()
-        log.info(f'Send to [{target_type}] {target}: {message[:50]}...')
-
-        # Simply call send_to — wx4py handles window activation internally
-        ok = wx.chat_window.send_to(target, message, target_type=target_type)
+        tid = _start_task(_do_send)
+        log.info(f'[send] queued [{target_type}] {target}: {message[:20]}... task={tid}')
+        self._send({'success': True, 'queued': True, 'task_id': tid})
 
     def _handle_batch_send(self, body):
         targets = body.get('targets', [])
@@ -560,7 +604,8 @@ def main():
     # Start auto-recovery background thread
     recover_thread = threading.Thread(target=_auto_recover_loop, daemon=True)
     recover_thread.start()
-    server = HTTPServer(('127.0.0.1', port), BridgeHandler)
+    server = ThreadingHTTPServer(('127.0.0.1', port), BridgeHandler)
+    server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
     log.info(f'Bridge listening on 127.0.0.1:{port}')
     try:
         server.serve_forever()
