@@ -513,7 +513,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def _handle_send(self, body):
         target = body.get('target', '')
         message = body.get('message', '')
-        target_type = body.get('targetType', 'contact')  # 'group' or 'contact'
+        target_type = body.get('target_type', body.get('targetType', 'contact'))
 
         if not target or not message:
             self._send({'success': False, 'error': 'target and message required'}, 400)
@@ -522,45 +522,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
         wx = get_wx()
         log.info(f'Send to [{target_type}] {target}: {message[:50]}...')
 
-        # Ensure window is visible before sending
-        try:
-            if hasattr(wx, '_window') and wx._window:
-                hwnd = wx._window.hwnd
-                if hwnd:
-                    from wx4py.core.win32 import is_window_visible
-                    import win32gui, win32con
-                    visible = is_window_visible(hwnd)
-                    log.info(f'[window] before send: visible={visible}')
-                    if not visible:
-                        log.info('[window] force-restoring window...')
-                        # Pull out of tray with SW_SHOW
-                        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-                        win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
-                            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW)
-                        win32gui.SetForegroundWindow(hwnd)
-                        win32gui.SetWindowPos(hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0,
-                            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
-                        log.info(f'[window] force-restore result: visible={is_window_visible(hwnd)}')
-        except Exception as e:
-            log.warning(f'[window] pre-send window check failed: {e}')
-
+        # Simply call send_to — wx4py handles window activation internally
         ok = wx.chat_window.send_to(target, message, target_type=target_type)
-
-        # Log window state after
-        try:
-            if hasattr(wx, '_window') and wx._window:
-                hwnd = wx._window.hwnd
-                if hwnd:
-                    log.info(f'[window] after send: visible={is_window_visible(hwnd)}')
-        except:
-            pass
-
-        self._send({'success': ok})
 
     def _handle_batch_send(self, body):
         targets = body.get('targets', [])
         message = body.get('message', '')
-        target_type = body.get('targetType', 'group')
+        target_type = body.get('target_type', body.get('targetType', 'contact'))
 
         if not targets or not message:
             self._send({'success': False, 'error': 'targets and message required'}, 400)
