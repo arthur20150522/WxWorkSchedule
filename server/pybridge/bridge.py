@@ -519,6 +519,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'success': False, 'error': 'target and message required'}, 400)
             return
 
+        # Ensure WeChat window is visible (tray -> restore) before send
+        try:
+            import win32gui, win32con
+            hwnd = self._get_wechat_hwnd()
+            if hwnd and not win32gui.IsWindowVisible(hwnd):
+                log.info('[send] restoring window from tray...')
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
+                import time; time.sleep(1)
+        except Exception as e:
+            log.debug(f'[send] window restore error: {e}')
+
         wx = get_wx()
         log.info(f'Send to [{target_type}] {target}: {message[:50]}...')
 
