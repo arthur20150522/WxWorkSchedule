@@ -10,12 +10,6 @@ import socket
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from socketserver import ThreadingTCPServer
-
-class ThreadingHTTPServer(ThreadingTCPServer, HTTPServer):
-    """Threading HTTP server that handles each request in a separate thread."""
-    daemon_threads = True
-    allow_reuse_address = True
 from urllib.parse import urlparse, parse_qs
 
 logging.basicConfig(level=logging.INFO, format='[bridge] %(message)s')
@@ -221,6 +215,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+        self.wfile.flush()
 
     def _read_body(self):
         length = int(self.headers.get('Content-Length', 0))
@@ -604,7 +599,7 @@ def main():
     # Start auto-recovery background thread
     recover_thread = threading.Thread(target=_auto_recover_loop, daemon=True)
     recover_thread.start()
-    server = ThreadingHTTPServer(('127.0.0.1', port), BridgeHandler)
+    server = HTTPServer(('127.0.0.1', port), BridgeHandler)
     server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
     log.info(f'Bridge listening on 127.0.0.1:{port}')
     try:
