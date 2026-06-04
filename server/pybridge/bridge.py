@@ -112,21 +112,40 @@ def try_auto_recover():
             all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
 
             def _uia_click(e, label):
-                """Try InvokePattern (session-independent) first, fall back to coordinate click."""
+                """Try InvokePattern first. If unresponsive after 3s, fall back to coordinate click."""
+                import ctypes
+                # Step A: try InvokePattern
                 try:
                     pattern_obj = e.GetCurrentPattern(UIA.UIA_InvokePatternId)
                     if pattern_obj:
                         invoke = pattern_obj.QueryInterface(UIA.IUIAutomationInvokePattern)
                         invoke.Invoke()
                         log.info(f'[recover] InvokePattern clicked "{label}"')
-                        return True
+                        # Quick check: did the click have any effect?
+                        time.sleep(3)
+                        try:
+                            hwnd2 = find_wechat_window()
+                            if hwnd2:
+                                cls2 = win32gui.GetClassName(hwnd2)
+                                if 'MainWindow' in cls2:
+                                    log.info(f'[recover] InvokePattern worked — MainWindow appeared')
+                                    return True
+                        except Exception:
+                            pass
+                        log.info(f'[recover] InvokePattern had no visible effect, trying coordinate click...')
                 except Exception:
                     pass
-                # Fallback: coordinate click (requires active graphical session)
+                
+                # Step B: fallback — coordinate click + Enter key combo
                 br = e.CurrentBoundingRectangle
                 cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
-                log.info(f'[recover] InvokePattern unavailable, fallback to coordinate click "{label}" at ({cx},{cy})')
+                log.info(f'[recover] Coordinate click "{label}" at ({cx},{cy})')
                 click_at(cx, cy)
+                time.sleep(1)
+                # Also send Enter as backup
+                ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0)
+                time.sleep(0.1)
+                ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
                 return True
 
             # Check for popup with "我知道了"
