@@ -189,9 +189,13 @@ apiRouter.put('/wechat/schedule', async (req, res) => {
     try {
         const { enabled, killTime, launchTime } = req.body;
         const db = await getDb();
-        await db.update(({ wechatSchedule }) => {
-            wechatSchedule = { enabled: !!enabled, killTime: killTime || '03:00', launchTime: launchTime || '06:00' };
-            return { wechatSchedule };
+        await db.update((draft) => {
+            if (!draft.wechatSchedule) {
+                draft.wechatSchedule = { enabled: false, killTime: '03:00', launchTime: '06:00' };
+            }
+            draft.wechatSchedule.enabled = !!enabled;
+            draft.wechatSchedule.killTime = killTime || draft.wechatSchedule.killTime;
+            draft.wechatSchedule.launchTime = launchTime || draft.wechatSchedule.launchTime;
         });
         await addLog('info', `WeChat schedule updated: enabled=${enabled}, kill=${killTime}, launch=${launchTime}`);
         res.json({ success: true, schedule: db.data.wechatSchedule });
