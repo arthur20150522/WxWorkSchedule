@@ -497,48 +497,53 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'error': str(e)})
 
     def _check_wechat_process(self):
-        """Check if WeChat is running. Uses wx4py window detection (reliable) + tasklist (detail)."""
+        """Check if WeChat is running. Uses WinAPI via window handle (most reliable)."""
         running = False
         pids = []
         
-        # Method 1: wx4py window detection (most reliable, works across sessions)
+        # Primary: get PID from WeChat window handle (works across exe name changes)
+        import ctypes
         try:
             from wx4py.core.win32 import find_wechat_window
             hwnd = find_wechat_window()
             if hwnd:
-                running = True
-        except Exception:
-            pass
-        
-        # Method 2: tasklist for PID detail (may fail due to session isolation)
-        import subprocess
-        try:
-            out = subprocess.check_output(
-                'tasklist /FO CSV /FI "IMAGENAME eq WeChatAppEx.exe"',
-                shell=True, encoding='gbk', errors='ignore'
-            )
-            for line in out.strip().split('\n')[1:]:
-                parts = line.replace('"','').split(',')
-                if len(parts) >= 2 and parts[0].strip() == 'WeChatAppEx.exe':
+                pid = ctypes.c_ulong()
+                ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value:
+                    running = True
+                    pids.append(pid.value)
+                    # Try to get child PIDs via psutil
                     try:
-                        pids.append(int(parts[1].strip()))
-                    except ValueError:
+                        import psutil
+                        proc = psutil.Process(pid.value)
+                        for child in proc.children(recursive=True):
+                            pids.append(child.pid)
+                    except Exception:
                         pass
         except Exception:
             pass
         
-        # Method 3: try psutil as last resort
-        if not running and not pids:
+        # Fallback: check known exe names
+        if not running:
+            import subprocess
             try:
-                import psutil
-                for proc in psutil.process_iter(['name']):
-                    if 'wechat' in (proc.info['name'] or '').lower():
-                        running = True
-                        pids.append(proc.pid)
+                for exe in ['WeChatAppEx.exe', 'Weixin.exe', 'WeChat.exe']:
+                    out = subprocess.check_output(
+                        f'tasklist /FO CSV /FI "IMAGENAME eq {exe}"',
+                        shell=True, encoding='gbk', errors='ignore'
+                    )
+                    for line in out.strip().split('\n')[1:]:
+                        parts = line.replace('"','').split(',')
+                        if len(parts) >= 2 and parts[0].strip() == exe:
+                            try:
+                                pids.append(int(parts[1].strip()))
+                                running = True
+                            except ValueError:
+                                pass
             except Exception:
                 pass
-                
-        return running or len(pids) > 0, pids
+        
+        return running, pids
 
     def _handle_wechat_status(self):
         """GET /wechat-status — check if WeChat process is running."""
@@ -620,7 +625,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self._send(result)
 
     def _handle_wechat_kill(self):
-        """POST /wechat-kill — kill all WeChatAppEx processes recursively with psutil."""
+        """POST /wechat-kill — kill WeChat via all known methods."""
         import subprocess, time
         try:
             running, pids = self._check_wechat_process()
@@ -628,47 +633,45 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send({'success': True, 'killed': 0, 'message': '微信进程未运行'})
                 return
             
-            # Use psutil for recursive process tree kill
             killed = 0
-            try:
-                import psutil
-                for pid in pids:
-                    try:
-                        proc = psutil.Process(pid)
-                        children = proc.children(recursive=True)
-                        for child in children:
-                            try:
-                                child.kill()
-                                killed += 1
-                            except Exception:
-                                pass
-                        proc.kill()
-                        killed += 1
-                    except psutil.NoSuchProcess:
-                        killed += 1  # already dead
-                    except Exception:
-                        pass
-            except ImportError:
-                # Fallback to taskkill
-                subprocess.run(['taskkill', '/F', '/IM', 'WeChatAppEx.exe'],
-                              capture_output=True, encoding='gbk', errors='ignore')
-                killed = len(pids)
+            
+            # Method 1: kill by PID (from window handle) + children
+            for pid in pids:
+                try:
+                    import psutil
+                    proc = psutil.Process(pid)
+                    for child in proc.children(recursive=True):
+                        try:
+                            child.kill()
+                            killed += 1
+                        except Exception:
+                            pass
+                    proc.kill()
+                    killed += 1
+                except Exception:
+                    pass
+            
+            # Method 2: kill by known exe names
+            for exe in ['Weixin.exe', 'WeChatAppEx.exe', 'WeChat.exe']:
+                try:
+                    subprocess.run(['taskkill', '/F', '/IM', exe],
+                                  capture_output=True, encoding='gbk', errors='ignore',
+                                  timeout=5)
+                except Exception:
+                    pass
 
-            # Rapid follow-up to catch restarts
-            time.sleep(0.5)
-            _, pids2 = self._check_wechat_process()
-            if pids2:
-                for pid in pids2:
-                    try:
-                        import psutil
-                        psutil.Process(pid).kill()
-                        killed += 1
-                    except Exception:
-                        subprocess.run(['taskkill', '/F', '/PID', str(pid)],
-                                      capture_output=True, encoding='gbk', errors='ignore')
+            # Follow-up: kill any that restarted
+            time.sleep(1)
+            for exe in ['Weixin.exe', 'WeChatAppEx.exe', 'WeChat.exe']:
+                try:
+                    subprocess.run(['taskkill', '/F', '/IM', exe],
+                                  capture_output=True, encoding='gbk', errors='ignore',
+                                  timeout=3)
+                except Exception:
+                    pass
 
-            log.info(f'[wechat-ctrl] Killed WeChatAppEx.exe ({killed} processes)')
-            self._send({'success': True, 'killed': killed, 'message': f'微信进程已关闭（{killed}个进程）'})
+            log.info(f'[wechat-ctrl] Killed WeChat ({killed} by PID + taskkill by name)')
+            self._send({'success': True, 'killed': killed, 'message': f'微信进程已关闭（终止 {killed} 个PID + taskkill）'})
         except Exception as e:
             self._send({'success': False, 'error': str(e)})
 

@@ -121,9 +121,9 @@ const main = async () => {
                 ? (currentMin >= killMin && currentMin < launchMin)
                 : (currentMin >= killMin || currentMin < launchMin);
             if (inWindow) {
-                // Keep WeChat dead — repeated taskkill
+                // Keep WeChat dead — kill all known exe names
                 try {
-                    execSync('taskkill /F /IM WeChatAppEx.exe 2>nul', { encoding: 'utf-8', timeout: 5000 });
+                    execSync('taskkill /F /IM Weixin.exe 2>nul & taskkill /F /IM WeChatAppEx.exe 2>nul & taskkill /F /IM WeChat.exe 2>nul', { encoding: 'utf-8', timeout: 5000 });
                 }
                 catch { /* not running — perfect */ }
             }
