@@ -653,21 +653,41 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send({'success': True, 'launched': False, 'message': '微信已在运行'})
                 return
             
-            # Try multiple known paths
+            # Try multiple known paths — WeChat is sometimes Weixin.exe
             paths = [
+                r'C:\Program Files\Tencent\WeChat\Weixin.exe',
                 r'C:\Program Files\Tencent\WeChat\WeChatAppEx.exe',
+                r'C:\Program Files (x86)\Tencent\WeChat\Weixin.exe',
                 r'C:\Program Files (x86)\Tencent\WeChat\WeChatAppEx.exe',
             ]
             
-            # Also try registry
-            try:
-                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                    r'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\WeChat')
-                path = winreg.QueryValueEx(key, 'DisplayIcon')[0]
-                if path and os.path.exists(path):
-                    paths.insert(0, path.replace(',0', ''))
-            except Exception:
-                pass
+            # Also try registry — multiple possible keys
+            for reg_path in [
+                r'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\WeChat',
+                r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\WeChat',
+            ]:
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path)
+                    path = winreg.QueryValueEx(key, 'InstallLocation')[0] if True else ''
+                    try:
+                        path = winreg.QueryValueEx(key, 'DisplayIcon')[0]
+                    except:
+                        try:
+                            path = winreg.QueryValueEx(key, 'InstallLocation')[0]
+                        except:
+                            pass
+                    if path:
+                        path = path.replace(',0', '').strip('"')
+                        if not path.endswith('.exe'):
+                            for exe in ['Weixin.exe', 'WeChatAppEx.exe', 'WeChat.exe']:
+                                p = os.path.join(path, exe)
+                                if os.path.exists(p):
+                                    paths.insert(0, p)
+                                    break
+                        elif os.path.exists(path):
+                            paths.insert(0, path)
+                except Exception:
+                    pass
 
             for p in paths:
                 if os.path.exists(p):
@@ -676,12 +696,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     self._send({'success': True, 'launched': True, 'path': p})
                     return
             
-            # Last resort: try shell:appsFolder
-            subprocess.Popen('start WeChatAppEx', shell=True)
-            log.info('[wechat-ctrl] Launched WeChat via start command')
-            self._send({'success': True, 'launched': True, 'path': 'start command fallback'})
-        except Exception as e:
-            self._send({'success': False, 'error': str(e)})
+            # Last resort: try shell commands for both names
+            for cmd in ['start Weixin', 'start WeChat', 'start WeChatAppEx']:
+                try:
+                    subprocess.Popen(cmd, shell=True)
+                    log.info(f'[wechat-ctrl] Launched WeChat via: {cmd}')
+                    self._send({'success': True, 'launched': True, 'path': cmd})
+                    return
+                except Exception:
+                    continue
+
+            self._send({'success': False, 'error': '找不到微信程序路径'})
 
     def _handle_task_status(self, path):
         """GET /task/<id> — poll async task result."""
