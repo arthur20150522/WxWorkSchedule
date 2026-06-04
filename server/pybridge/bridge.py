@@ -708,6 +708,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     continue
 
             self._send({'success': False, 'error': '找不到微信程序路径'})
+        except Exception as e:
+            self._send({'success': False, 'error': str(e)})
 
     def _handle_task_status(self, path):
         """GET /task/<id> — poll async task result."""
