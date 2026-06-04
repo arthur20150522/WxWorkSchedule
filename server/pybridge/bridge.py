@@ -111,15 +111,30 @@ def try_auto_recover():
             elem = uia.ElementFromHandle(hwnd)
             all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
 
+            def _uia_click(e, label):
+                """Try InvokePattern (session-independent) first, fall back to coordinate click."""
+                try:
+                    pattern_obj = e.GetCurrentPattern(UIA.UIA_InvokePatternId)
+                    if pattern_obj:
+                        invoke = pattern_obj.QueryInterface(UIA.IUIAutomationInvokePattern)
+                        invoke.Invoke()
+                        log.info(f'[recover] InvokePattern clicked "{label}"')
+                        return True
+                except Exception:
+                    pass
+                # Fallback: coordinate click (requires active graphical session)
+                br = e.CurrentBoundingRectangle
+                cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
+                log.info(f'[recover] InvokePattern unavailable, fallback to coordinate click "{label}" at ({cx},{cy})')
+                click_at(cx, cy)
+                return True
+
             # Check for popup with "我知道了"
             for i in range(all_e.Length):
                 e = all_e.GetElement(i)
                 n = e.CurrentName or ''; c = e.CurrentClassName or ''
                 if n == '我知道了' and ('Button' in c or 'mmui' in c):
-                    br = e.CurrentBoundingRectangle
-                    cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
-                    log.info(f'[recover] Clicking "我知道了" at ({cx},{cy})')
-                    click_at(cx, cy)
+                    _uia_click(e, '我知道了')
                     time.sleep(2)
                     # Re-scan after dismissing popup (window layout changes)
                     hwnd = find_wechat_window() or hwnd
@@ -132,10 +147,7 @@ def try_auto_recover():
                 e = all_e.GetElement(i)
                 n = e.CurrentName or ''
                 if n in ('登录', '进入微信'):
-                    br = e.CurrentBoundingRectangle
-                    cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
-                    log.info(f'[recover] Clicking "{n}" at ({cx},{cy})')
-                    click_at(cx, cy)
+                    _uia_click(e, n)
                     clicked_login = True
                     break
 
