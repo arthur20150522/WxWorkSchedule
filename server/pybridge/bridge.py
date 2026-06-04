@@ -1100,7 +1100,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
         pass
 
 
+def _graceful_shutdown():
+    """Disconnect wx4py cleanly to avoid crashing WeChat on restart."""
+    global _wx
+    if _wx is not None:
+        try:
+            _wx.disconnect()
+            log.info('[shutdown] wx4py disconnected gracefully')
+        except Exception:
+            pass
+        _wx = None
+
 def main():
+    import atexit
+    atexit.register(_graceful_shutdown)
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 39800
     # Start auto-recovery background thread
     recover_thread = threading.Thread(target=_auto_recover_loop, daemon=True)
@@ -1112,6 +1125,9 @@ def main():
         server.serve_forever()
     except KeyboardInterrupt:
         log.info('Shutting down...')
+        _graceful_shutdown()
+    finally:
+        _graceful_shutdown()
         server.server_close()
 
 
