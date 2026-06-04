@@ -262,6 +262,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_dump_uia()
             elif path == '/wechat-status':
                 self._handle_wechat_status()
+            elif path == '/wechat-diag':
+                self._handle_wechat_diag()
             elif path.startswith('/task/'):
                 self._handle_task_status(path)
             else:
@@ -545,6 +547,77 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'running': running, 'pidCount': len(pids), 'pids': pids})
         except Exception as e:
             self._send({'error': str(e)})
+
+    def _handle_wechat_diag(self):
+        """GET /wechat-diag — diagnostic: try every method to find/kill WeChat."""
+        import subprocess, time, os
+        result = {'methods': []}
+        
+        # Method A: tasklist
+        try:
+            out = subprocess.check_output('tasklist /FO CSV', shell=True, encoding='gbk', errors='ignore')
+            wechat_lines = [l for l in out.split('\n') if 'WeChatAppEx' in l]
+            result['methods'].append({
+                'name': 'tasklist', 'found': len(wechat_lines) > 0,
+                'detail': f'{len(wechat_lines)} WeChatAppEx lines' if wechat_lines else 'none found',
+            })
+        except Exception as e:
+            result['methods'].append({'name': 'tasklist', 'found': False, 'error': str(e)})
+        
+        # Method B: psutil
+        try:
+            import psutil
+            procs = []
+            for p in psutil.process_iter(['name', 'pid']):
+                if 'wechat' in (p.info['name'] or '').lower():
+                    procs.append({'pid': p.pid, 'name': p.info['name']})
+            result['methods'].append({
+                'name': 'psutil', 'found': len(procs) > 0,
+                'detail': f'{len(procs)} processes', 'processes': procs
+            })
+        except Exception as e:
+            result['methods'].append({'name': 'psutil', 'found': False, 'error': str(e)})
+        
+        # Method C: wx4py window
+        try:
+            from wx4py.core.win32 import find_wechat_window
+            hwnd = find_wechat_window()
+            import win32gui
+            title = win32gui.GetWindowText(hwnd) if hwnd else ''
+            result['methods'].append({
+                'name': 'wx4py window', 'found': bool(hwnd),
+                'hwnd': hwnd, 'title': title
+            })
+        except Exception as e:
+            result['methods'].append({'name': 'wx4py window', 'found': False, 'error': str(e)})
+        
+        # Method D: WinAPI GetWindowThreadProcessId
+        try:
+            from wx4py.core.win32 import find_wechat_window
+            hwnd = find_wechat_window()
+            if hwnd:
+                import ctypes
+                pid = ctypes.c_ulong()
+                ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                proc_info = {'name': 'WinAPI PID', 'found': True, 'hwnd': hwnd, 'pid': pid.value}
+                
+                # Try psutil by this PID
+                try:
+                    import psutil
+                    proc = psutil.Process(pid.value)
+                    proc_info['process_name'] = proc.name()
+                    proc_info['children'] = len(proc.children(recursive=True))
+                except Exception as e2:
+                    proc_info['psutil_error'] = str(e2)
+                
+                result['methods'].append(proc_info)
+            else:
+                result['methods'].append({'name': 'WinAPI PID', 'found': False})
+        except Exception as e:
+            result['methods'].append({'name': 'WinAPI PID', 'error': str(e)})
+        
+        result['conclusion'] = 'running' if result['methods'][2]['found'] else 'not_found'
+        self._send(result)
 
     def _handle_wechat_kill(self):
         """POST /wechat-kill — kill all WeChatAppEx processes recursively with psutil."""
