@@ -523,17 +523,25 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'error': str(e)})
 
     def _handle_wechat_kill(self):
-        """POST /wechat-kill — kill all WeChatAppEx processes."""
-        import subprocess
+        """POST /wechat-kill — kill all WeChatAppEx processes, double-tap to prevent auto-restart."""
+        import subprocess, time
         try:
-            running, _ = self._check_wechat_process()
+            running, pids = self._check_wechat_process()
             if not running:
                 self._send({'success': True, 'killed': 0, 'message': '微信进程未运行'})
                 return
+            killed = len(pids)
             subprocess.run(['taskkill', '/F', '/IM', 'WeChatAppEx.exe'],
                           capture_output=True, encoding='gbk', errors='ignore')
-            log.info('[wechat-ctrl] Killed WeChatAppEx.exe')
-            self._send({'success': True, 'killed': len(_[1]) if _[0] else 0, 'message': '微信进程已关闭'})
+            time.sleep(1)
+            # Double-tap: WeChat auto-restarts, kill any that came back
+            _, pids2 = self._check_wechat_process()
+            if pids2:
+                subprocess.run(['taskkill', '/F', '/IM', 'WeChatAppEx.exe'],
+                              capture_output=True, encoding='gbk', errors='ignore')
+                killed += len(pids2)
+            log.info(f'[wechat-ctrl] Killed WeChatAppEx.exe ({killed} total)')
+            self._send({'success': True, 'killed': killed, 'message': f'微信进程已关闭（共终止 {killed} 个）'})
         except Exception as e:
             self._send({'success': False, 'error': str(e)})
 
