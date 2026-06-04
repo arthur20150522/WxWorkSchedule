@@ -69,11 +69,15 @@ def _is_main_window(hwnd):
 
 # ── Auto-recovery: detect login page and click "进入微信" ─────────────
 AUTO_RECOVER_ENABLED = True
-AUTO_RECOVER_INTERVAL = 300  # check every 5min (don't hammer the window)
+AUTO_RECOVER_INTERVAL = 300  # check every 5min
+LAST_RECOVER_ACTION = 0      # timestamp of last recovery action (cooldown)
 
 def try_auto_recover():
     """Auto-recovery: reconnect wx4py if needed, then handle login page."""
-    global _wx
+    global _wx, LAST_RECOVER_ACTION
+    # Cooldown: if we did recovery action in last 10min, skip to avoid re-triggering
+    if time.time() - LAST_RECOVER_ACTION < 600:
+        return
     try:
         import ctypes, win32gui, win32con, time
 
@@ -96,6 +100,7 @@ def try_auto_recover():
                     pass
                 _wx = None
                 get_wx()  # will reconnect
+                LAST_RECOVER_ACTION = time.time()
         except Exception:
             pass
 
@@ -268,6 +273,7 @@ def try_auto_recover():
             time.sleep(0.1)
             ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
             log.info('[recover] Win32 PostMessage Enter × 2 sent')
+            LAST_RECOVER_ACTION = time.time()
 
     except Exception as e:
         log.error(f'[recover] Error: {e}')
