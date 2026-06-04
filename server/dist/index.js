@@ -122,10 +122,13 @@ const main = async () => {
                 : (currentMin >= killMin || currentMin < launchMin);
             if (inWindow) {
                 // Keep WeChat dead — kill all known exe names
-                try {
-                    execSync('taskkill /F /IM Weixin.exe 2>nul & taskkill /F /IM WeChatAppEx.exe 2>nul & taskkill /F /IM WeChat.exe 2>nul', { encoding: 'utf-8', timeout: 5000 });
+                const exes = ['Weixin.exe', 'WeChatAppEx.exe', 'WeChat.exe'];
+                for (const exe of exes) {
+                    try {
+                        execSync(`taskkill /F /IM ${exe}`, { encoding: 'utf-8', timeout: 3000, stdio: 'pipe' });
+                    }
+                    catch { /* not running — fine */ }
                 }
-                catch { /* not running — perfect */ }
             }
             else if (hh === lh && mm === lm) {
                 // At launch time: start WeChat

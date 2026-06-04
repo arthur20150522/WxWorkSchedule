@@ -56,7 +56,7 @@ def get_wx():
 
 # ── Auto-recovery: detect login page and click "进入微信" ─────────────
 AUTO_RECOVER_ENABLED = True
-AUTO_RECOVER_INTERVAL = 300  # 5 minutes
+AUTO_RECOVER_INTERVAL = 60  # check every 60s (faster response after launch)
 
 def try_auto_recover():
     """Auto-recovery: bring WeChat to foreground, dismiss popups, click login, wait for main window."""
