@@ -53,6 +53,19 @@ def get_wx():
         log.info(f'Connected: {_wx.is_connected}')
     return _wx
 
+def _is_main_window(hwnd):
+    """Check if hwnd is WeChat main window (> 30 UIA elements, login page has < 25)."""
+    try:
+        import pythoncom; pythoncom.CoInitialize()
+        import comtypes.client as cc
+        import comtypes.gen.UIAutomationClient as UIA
+        uia = cc.CreateObject('{ff48dba4-60ef-4201-aa87-54103eef594e}', interface=UIA.IUIAutomation)
+        elem = uia.ElementFromHandle(hwnd)
+        count = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition()).Length
+        return count > 30
+    except Exception:
+        return False
+
 
 # ── Auto-recovery: detect login page and click "进入微信" ─────────────
 AUTO_RECOVER_ENABLED = True
@@ -91,16 +104,8 @@ def try_auto_recover():
             wx = get_wx()
             if wx.is_connected:
                 hwnd_quick = wx._window.hwnd if hasattr(wx, '_window') else 0
-                if hwnd_quick:
-                    # Use UIA light check: > 30 elements = main window (vs < 30 = login)
-                    import pythoncom; pythoncom.CoInitialize()
-                    import comtypes.client as cc
-                    import comtypes.gen.UIAutomationClient as UIA
-                    uia = cc.CreateObject('{ff48dba4-60ef-4201-aa87-54103eef594e}', interface=UIA.IUIAutomation)
-                    elem = uia.ElementFromHandle(hwnd_quick)
-                    count = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition()).Length
-                    if count > 30:
-                        return  # healthy — skip recovery
+                if hwnd_quick and _is_main_window(hwnd_quick):
+                    return  # healthy — skip recovery
         except Exception:
             pass
         # ── Step 2: find WeChat window ──
@@ -157,11 +162,9 @@ def try_auto_recover():
                         time.sleep(3)
                         try:
                             hwnd2 = find_wechat_window()
-                            if hwnd2:
-                                cls2 = win32gui.GetClassName(hwnd2)
-                                if 'MainWindow' in cls2:
-                                    log.info(f'[recover] InvokePattern worked — MainWindow appeared')
-                                    return True
+                            if hwnd2 and _is_main_window(hwnd2):
+                                log.info(f'[recover] InvokePattern worked — main window detected')
+                                return True
                         except Exception:
                             pass
                         log.info(f'[recover] InvokePattern had no visible effect, trying coordinate click...')
@@ -227,23 +230,21 @@ def try_auto_recover():
                 time.sleep(0.5)
                 try:
                     hwnd = find_wechat_window()
-                    if hwnd:
-                        cls = win32gui.GetClassName(hwnd)
-                        if 'MainWindow' in cls:
-                            log.info(f'[recover] Main window appeared: HWND={hwnd}')
-                            # Reconnect wx4py client to new main window
-                            if _wx is not None:
-                                try:
-                                    _wx.disconnect()
-                                except Exception:
-                                    pass
-                            _wx = None
-                            # Trigger fresh connection immediately
+                    if hwnd and _is_main_window(hwnd):
+                        log.info(f'[recover] Main window appeared: HWND={hwnd}')
+                        # Reconnect wx4py client to new main window
+                        if _wx is not None:
                             try:
-                                wx_new = get_wx()
-                                log.info(f'[recover] Reconnected: {wx_new.is_connected}')
-                            except Exception as e:
-                                log.warning(f'[recover] Reconnect failed: {e}, will retry on next request')
+                                _wx.disconnect()
+                            except Exception:
+                                pass
+                        _wx = None
+                        # Trigger fresh connection immediately
+                        try:
+                            wx_new = get_wx()
+                            log.info(f'[recover] Reconnected: {wx_new.is_connected}')
+                        except Exception as e:
+                            log.warning(f'[recover] Reconnect failed: {e}, will retry on next request')
                             return
                 except Exception:
                     pass
