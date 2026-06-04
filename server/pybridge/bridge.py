@@ -18,18 +18,39 @@ log = logging.getLogger(__name__)
 # ── wx4py client (lazy init) ──────────────────────────────────────────
 _wx = None
 
-# ── Async task system ─────────────────────────────────────────────────
+# ── Serial task queue (wx4py is NOT thread-safe!) ──────────────────
 _tasks = {}
 _tasks_lock = threading.Lock()
 _task_counter = [0]
+_send_queue = []            # list of (tid, fn, args, kwargs)
+_queue_cond = threading.Condition()
+_worker_running = True
 
 def _start_task(fn, *args, **kwargs):
-    """Run fn in background, track by task_id."""
+    """Enqueue fn for serial execution on single worker thread (wx4py is NOT thread-safe)."""
     with _tasks_lock:
         _task_counter[0] += 1
         tid = str(_task_counter[0])
         _tasks[tid] = {'status': 'pending', 'result': None, 'error': None}
-    def _runner():
+    with _queue_cond:
+        _send_queue.append((tid, fn, args, kwargs))
+        _queue_cond.notify()
+    return tid
+
+def _task_worker():
+    """Single-threaded worker: process send tasks one at a time."""
+    global _worker_running
+    log.info('[queue] Send worker thread started')
+    while _worker_running:
+        with _queue_cond:
+            while _worker_running and not _send_queue:
+                _queue_cond.wait(timeout=5)
+            if not _worker_running:
+                break
+            if not _send_queue:
+                continue
+            tid, fn, args, kwargs = _send_queue.pop(0)
+        # Execute task (blocks until done, no concurrency!)
         try:
             result = fn(*args, **kwargs)
             with _tasks_lock:
@@ -37,8 +58,7 @@ def _start_task(fn, *args, **kwargs):
         except Exception as e:
             with _tasks_lock:
                 _tasks[tid] = {'status': 'failed', 'result': None, 'error': str(e)}
-    threading.Thread(target=_runner, daemon=True).start()
-    return tid
+    log.info('[queue] Send worker thread stopped')
 
 def get_wx():
     global _wx
@@ -1116,8 +1136,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 
 def _graceful_shutdown():
-    """Disconnect wx4py cleanly to avoid crashing WeChat on restart."""
-    global _wx
+    """Disconnect wx4py cleanly + stop worker thread to avoid crashing WeChat on restart."""
+    global _wx, _worker_running
+    _worker_running = False
+    with _queue_cond:
+        _queue_cond.notify_all()
     if _wx is not None:
         try:
             _wx.disconnect()
@@ -1130,6 +1153,9 @@ def main():
     import atexit
     atexit.register(_graceful_shutdown)
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 39800
+    # Start send worker thread (serial queue — wx4py is NOT thread-safe)
+    worker_thread = threading.Thread(target=_task_worker, daemon=True)
+    worker_thread.start()
     # Start auto-recovery background thread
     recover_thread = threading.Thread(target=_auto_recover_loop, daemon=True)
     recover_thread.start()
