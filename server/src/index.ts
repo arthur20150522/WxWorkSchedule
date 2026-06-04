@@ -4,6 +4,7 @@ import { initDB, getDb, addLog } from './dbManager.js';
 import { BotManager } from './botManager.js';
 import { startScheduler } from './scheduler.js';
 import { wxBridge } from './wxBridge.js';
+import { execSync } from 'child_process';
 import express from 'express';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -108,9 +109,8 @@ const main = async () => {
   startAutoRecover();
   console.log('[AutoRecover] Enabled — runs daily at 06:30');
 
-  // 6b. WeChat auto-restart schedule — kill/launch at configured times
-  let wechatLastKillDate = '';
-  let wechatLastLaunchDate = '';
+  // 6b. WeChat auto-restart schedule — continuous suppression during kill→launch window
+  // Strategy: while in the closed window, taskkill every 30s to beat WeChat auto-restart.
   setInterval(async () => {
     try {
       const db = await getDb();
@@ -118,27 +118,39 @@ const main = async () => {
       if (!schedule || !schedule.enabled) return;
 
       const now = new Date();
-      const dateStr = now.toISOString().slice(0, 10);
-      const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const hh = now.getHours();
+      const mm = now.getMinutes();
+      const currentMin = hh * 60 + mm;
+      const [kh, km] = schedule.killTime.split(':').map(Number);
+      const [lh, lm] = schedule.launchTime.split(':').map(Number);
+      const killMin = kh * 60 + km;
+      const launchMin = lh * 60 + lm;
 
-      if (hhmm === schedule.killTime && dateStr !== wechatLastKillDate) {
-        wechatLastKillDate = dateStr;
-        const result = await wxBridge.fetchBridge<{success:boolean;message?:string}>('/wechat-kill', 'POST');
-        console.log(`[WeChatSched] Kill at ${hhmm}: ${result.message || 'ok'}`);
-        await addLog('warn', `WeChat 定时关闭: ${result.message || 'ok'}`);
-      }
+      // Are we in the suppressed window? (killTime ≤ now < launchTime)
+      const inWindow = killMin < launchMin
+        ? (currentMin >= killMin && currentMin < launchMin)
+        : (currentMin >= killMin || currentMin < launchMin);
 
-      if (hhmm === schedule.launchTime && dateStr !== wechatLastLaunchDate) {
-        wechatLastLaunchDate = dateStr;
-        const result = await wxBridge.fetchBridge<{success:boolean;message?:string}>('/wechat-launch', 'POST');
-        console.log(`[WeChatSched] Launch at ${hhmm}: ${result.message || 'ok'}`);
-        await addLog('info', `WeChat 定时拉起: ${result.message || 'ok'}`);
+      if (inWindow) {
+        // Keep WeChat dead — repeated taskkill
+        try {
+          execSync('taskkill /F /IM WeChatAppEx.exe 2>nul', { encoding: 'utf-8', timeout: 5000 });
+        } catch { /* not running — perfect */ }
+      } else if (hh === lh && mm === lm) {
+        // At launch time: start WeChat
+        try {
+          const result = await wxBridge.fetchBridge<{success:boolean;message?:string}>('/wechat-launch', 'POST');
+          console.log(`[WeChatSched] Launch at ${schedule.launchTime}: ${result.message || 'ok'}`);
+          await addLog('info', `WeChat 定时拉起: ${result.message || 'ok'}`);
+        } catch (e) {
+          console.error(`[WeChatSched] Launch failed: ${(e as Error).message}`);
+        }
       }
     } catch (e) {
-      // silently ignore — schedule check should not crash the server
+      // silently ignore
     }
-  }, 60000);
-  console.log('[WeChatSched] Checker started — every 60s');
+  }, 30000);
+  console.log('[WeChatSched] Suppression checker started — every 30s');
 
   // 7. Health monitor — push notification when WeChat goes offline
   BotManager.startHealthMonitor();
