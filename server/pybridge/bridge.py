@@ -143,13 +143,28 @@ def try_auto_recover():
                     break
 
             # Check for "进入微信" / "登录" button
-            for i in range(all_e.Length):
-                e = all_e.GetElement(i)
-                n = e.CurrentName or ''
-                if n in ('登录', '进入微信'):
-                    _uia_click(e, n)
-                    clicked_login = True
-                    break
+            # Prefer XTextView (inner text) over XOutlineButton (outer frame)
+            found = False
+            for pref_class in ('mmui::XTextView', 'mmui::XOutlineButton', 'mmui::XButton'):
+                if found: break
+                for i in range(all_e.Length):
+                    e = all_e.GetElement(i)
+                    n = e.CurrentName or ''
+                    c = e.CurrentClassName or ''
+                    if n in ('登录', '进入微信') and pref_class in c:
+                        _uia_click(e, n)
+                        clicked_login = True
+                        found = True
+                        break
+            # Fallback: any element with matching name
+            if not found:
+                for i in range(all_e.Length):
+                    e = all_e.GetElement(i)
+                    n = e.CurrentName or ''
+                    if n in ('登录', '进入微信'):
+                        _uia_click(e, n)
+                        clicked_login = True
+                        break
 
         except Exception as e:
             log.warning(f'[recover] UIA scan failed: {e}')
