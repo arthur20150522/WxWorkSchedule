@@ -91,10 +91,16 @@ def try_auto_recover():
             wx = get_wx()
             if wx.is_connected:
                 hwnd_quick = wx._window.hwnd if hasattr(wx, '_window') else 0
-                cls_quick = win32gui.GetClassName(hwnd_quick) if hwnd_quick else ''
-                if 'MainWindow' in cls_quick:
-                    # WeChat is healthy — no need to recover
-                    return
+                if hwnd_quick:
+                    # Use UIA light check: > 30 elements = main window (vs < 30 = login)
+                    import pythoncom; pythoncom.CoInitialize()
+                    import comtypes.client as cc
+                    import comtypes.gen.UIAutomationClient as UIA
+                    uia = cc.CreateObject('{ff48dba4-60ef-4201-aa87-54103eef594e}', interface=UIA.IUIAutomation)
+                    elem = uia.ElementFromHandle(hwnd_quick)
+                    count = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition()).Length
+                    if count > 30:
+                        return  # healthy — skip recovery
         except Exception:
             pass
         # ── Step 2: find WeChat window ──
