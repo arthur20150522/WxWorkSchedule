@@ -95,6 +95,14 @@ apiRouter.get('/status', async (_req, res) => {
             pending: all.filter(t => t.status === 'pending').length,
             failed: all.filter(t => t.status === 'failed').length,
             overduePending: all.filter(t => t.status === 'pending' && new Date(t.scheduleTime) <= now).length,
+            todayPending: all.filter(t => {
+                if (t.status !== 'pending')
+                    return false;
+                const sch = new Date(t.scheduleTime);
+                if (isNaN(sch.getTime()))
+                    return false;
+                return sch.toDateString() === now.toDateString();
+            }).length,
         };
         res.json({
             online,

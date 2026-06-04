@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const PORT = process.env.PORT || 3000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-/** Check every minute and run at 06:00 each day */
+/** Check every minute and run at 06:30 each day (after WeChat 6am kick) */
 function startAutoRecover() {
     let lastRunDate = '';
     setInterval(async () => {
@@ -17,23 +17,39 @@ function startAutoRecover() {
         const dateStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
         const hour = now.getHours();
         const minute = now.getMinutes();
-        if (hour === 6 && minute === 0 && dateStr !== lastRunDate) {
+        if (hour === 6 && minute === 30 && dateStr !== lastRunDate) {
             lastRunDate = dateStr;
             try {
                 const db = await getDb();
-                let count = 0;
+                let recovered = 0;
+                let resetToToday = 0;
                 await db.update(({ tasks }) => {
                     for (const t of tasks) {
+                        // 1. Recover failed recurring tasks
                         if (t.status === 'failed' && t.recurrence && t.recurrence !== 'once') {
                             t.status = 'pending';
                             t.error = undefined;
-                            count++;
+                            recovered++;
+                        }
+                        // 2. Reset tasks that were pushed forward during outage
+                        else if (t.status === 'pending' && t.recurrence && t.recurrence !== 'once' &&
+                            t.error && t.error.includes('已推到下次')) {
+                            const oldTime = new Date(t.scheduleTime);
+                            if (!isNaN(oldTime.getTime())) {
+                                const today = new Date();
+                                today.setHours(0, 0, 0, 0);
+                                const newTime = new Date(today);
+                                newTime.setHours(oldTime.getHours(), oldTime.getMinutes(), 0, 0);
+                                t.scheduleTime = newTime.toISOString();
+                                t.error = undefined;
+                                resetToToday++;
+                            }
                         }
                     }
                 });
-                if (count > 0) {
-                    console.log(`[AutoRecover] Recovered ${count} failed recurring tasks → pending`);
-                    await addLog('info', `自动恢复: ${count} 个失败周期任务 → pending`);
+                if (recovered > 0 || resetToToday > 0) {
+                    console.log(`[AutoRecover] 06:30 — recovered ${recovered} failed + ${resetToToday} pushed-back tasks`);
+                    await addLog('info', `auto-recover 06:30: ${recovered} 失败恢复 + ${resetToToday} 已推到下次回归今日`);
                 }
             }
             catch (e) {
@@ -81,7 +97,7 @@ const main = async () => {
     startScheduler();
     // 6. Daily auto-recover failed recurring tasks at 06:00
     startAutoRecover();
-    console.log('[AutoRecover] Enabled — runs daily at 06:00');
+    console.log('[AutoRecover] Enabled — runs daily at 06:30');
     // 7. Health monitor — push notification when WeChat goes offline
     BotManager.startHealthMonitor();
 };
