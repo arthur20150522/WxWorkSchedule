@@ -644,70 +644,101 @@ class BridgeHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send({'success': False, 'error': str(e)})
 
+    def _find_wechat_exe(self):
+        """Find WeChat executable path. Try multiple approaches."""
+        import os, winreg as wr
+        
+        # Method 1: ask psutil for running WeChat process path
+        try:
+            import psutil
+            for proc in psutil.process_iter(['name', 'exe']):
+                name = (proc.info['name'] or '').lower()
+                if name in ('weixin.exe', 'wechatappex.exe', 'wechat.exe'):
+                    exe = proc.info['exe']
+                    if exe and os.path.exists(exe):
+                        return exe
+        except Exception:
+            pass
+        
+        # Method 2: Get path from currently running WeChat via WinAPI
+        try:
+            from wx4py.core.win32 import find_wechat_window
+            hwnd = find_wechat_window()
+            if hwnd:
+                import ctypes
+                pid = ctypes.c_ulong()
+                ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value:
+                    try:
+                        import psutil
+                        exe = psutil.Process(pid.value).exe()
+                        if exe and os.path.exists(exe):
+                            return exe
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        
+        # Method 3: Common install paths
+        for base in [
+            r'C:\Program Files\Tencent\WeChat',
+            r'C:\Program Files (x86)\Tencent\WeChat',
+            os.path.expandvars(r'%LOCALAPPDATA%\Tencent\WeChat'),
+        ]:
+            for name in ['Weixin.exe', 'WeChatAppEx.exe', 'WeChat.exe']:
+                p = os.path.join(base, name)
+                if os.path.exists(p):
+                    return p
+        
+        # Method 4: Registry
+        for key_path in [
+            r'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\WeChat',
+            r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\WeChat',
+        ]:
+            try:
+                key = wr.OpenKey(wr.HKEY_LOCAL_MACHINE, key_path)
+                for val_name in ['DisplayIcon', 'InstallLocation']:
+                    try:
+                        val = wr.QueryValueEx(key, val_name)[0]
+                        val = val.replace(',0', '').strip('"')
+                        if val.endswith('.exe') and os.path.exists(val):
+                            return val
+                        for name in ['Weixin.exe', 'WeChatAppEx.exe', 'WeChat.exe']:
+                            p = os.path.join(val, name)
+                            if os.path.exists(p):
+                                return p
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        
+        # Method 5: Start Menu shortcut
+        import glob
+        for pattern in [
+            r'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\**\WeChat*.lnk',
+            os.path.expandvars(r'%APPDATA%\Microsoft\Windows\Start Menu\Programs\**\WeChat*.lnk'),
+        ]:
+            for lnk in glob.glob(pattern, recursive=True):
+                return lnk  # subprocess.Popen can run .lnk files directly
+        
+        return None
+
     def _handle_wechat_launch(self):
         """POST /wechat-launch — launch WeChat."""
-        import subprocess, os, winreg
+        import subprocess
         try:
             running, _ = self._check_wechat_process()
             if running:
                 self._send({'success': True, 'launched': False, 'message': '微信已在运行'})
                 return
-            
-            # Try multiple known paths — WeChat is sometimes Weixin.exe
-            paths = [
-                r'C:\Program Files\Tencent\WeChat\Weixin.exe',
-                r'C:\Program Files\Tencent\WeChat\WeChatAppEx.exe',
-                r'C:\Program Files (x86)\Tencent\WeChat\Weixin.exe',
-                r'C:\Program Files (x86)\Tencent\WeChat\WeChatAppEx.exe',
-            ]
-            
-            # Also try registry — multiple possible keys
-            for reg_path in [
-                r'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\WeChat',
-                r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\WeChat',
-            ]:
-                try:
-                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path)
-                    # Try DisplayIcon first, then InstallLocation
-                    value = ''
-                    try:
-                        value = winreg.QueryValueEx(key, 'DisplayIcon')[0]
-                    except:
-                        try:
-                            value = winreg.QueryValueEx(key, 'InstallLocation')[0]
-                        except:
-                            pass
-                    if value:
-                        value = value.replace(',0', '').strip('"')
-                        if not value.endswith('.exe'):
-                            for exe in ['Weixin.exe', 'WeChatAppEx.exe', 'WeChat.exe']:
-                                p = os.path.join(value, exe)
-                                if os.path.exists(p):
-                                    paths.insert(0, p)
-                                    break
-                        elif os.path.exists(value):
-                            paths.insert(0, value)
-                except Exception:
-                    pass
 
-            for p in paths:
-                if os.path.exists(p):
-                    subprocess.Popen([p], shell=True)
-                    log.info(f'[wechat-ctrl] Launched WeChat: {p}')
-                    self._send({'success': True, 'launched': True, 'path': p})
-                    return
-            
-            # Last resort: try shell commands for both names
-            for cmd in ['start Weixin', 'start WeChat', 'start WeChatAppEx']:
-                try:
-                    subprocess.Popen(cmd, shell=True)
-                    log.info(f'[wechat-ctrl] Launched WeChat via: {cmd}')
-                    self._send({'success': True, 'launched': True, 'path': cmd})
-                    return
-                except Exception:
-                    continue
-
-            self._send({'success': False, 'error': '找不到微信程序路径'})
+            exe = self._find_wechat_exe()
+            if exe:
+                subprocess.Popen([exe], shell=True)
+                log.info(f'[wechat-ctrl] Launched WeChat: {exe}')
+                self._send({'success': True, 'launched': True, 'path': exe})
+            else:
+                self._send({'success': False, 'error': '找不到微信程序路径'})
         except Exception as e:
             self._send({'success': False, 'error': str(e)})
 
