@@ -120,28 +120,40 @@ class TaskQueue {
   private isProcessing = false;
   private _currentTarget: string | null = null;
   private _lastError: string | null = null;
+  private _addingIds = new Set<string>();  // track in-flight add() to prevent scheduler race
 
   get length(): number { return this.queue.length; }
   get currentTarget(): string | null { return this._currentTarget; }
   get lastError(): string | null { return this._lastError; }
 
+  /** Check if a task is already queued or being added (for scheduler dedup) */
+  hasTask(taskId: string): boolean {
+    return this.queue.some(t => t.id === taskId) || this._addingIds.has(taskId);
+  }
+
   async add(task: Task) {
-    // Deduplicate: skip if already in queue
+    // Deduplicate: skip if already in queue or currently being added
     if (this.queue.find(t => t.id === task.id)) return;
+    if (this._addingIds.has(task.id)) return;
 
-    // Immediately mark processing in DB to prevent scheduler re-pickup
+    this._addingIds.add(task.id);
     try {
-      const db = await getDb();
-      await db.update(({ tasks }) => {
-        const t = tasks.find(x => x.id === task.id);
-        if (t && t.status === 'pending') t.status = 'processing';
-      });
-    } catch (e) {
-      console.error(`[TaskQueue] Failed to mark task ${task.id} processing:`, e);
-    }
+      // Immediately mark processing in DB to prevent scheduler re-pickup
+      try {
+        const db = await getDb();
+        await db.update(({ tasks }) => {
+          const t = tasks.find(x => x.id === task.id);
+          if (t && t.status === 'pending') t.status = 'processing';
+        });
+      } catch (e) {
+        console.error(`[TaskQueue] Failed to mark task ${task.id} processing:`, e);
+      }
 
-    console.log(`[TaskQueue] Enqueue task ${task.id} → ${task.targetName}`);
-    this.queue.push(task);
+      console.log(`[TaskQueue] Enqueue task ${task.id} → ${task.targetName}`);
+      this.queue.push(task);
+    } finally {
+      this._addingIds.delete(task.id);
+    }
     this.process();
   }
 

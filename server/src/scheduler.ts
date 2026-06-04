@@ -109,6 +109,11 @@ export const startScheduler = () => {
           continue;
         }
 
+        // Deduplicate: skip if already queued or being added
+        if (taskQueue.hasTask(task.id)) {
+          continue;
+        }
+
         taskQueue.add(task);
       }
 
