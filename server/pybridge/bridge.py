@@ -220,21 +220,22 @@ def try_auto_recover():
                     log.debug(f'[recover] Still waiting for main window ({i * 0.5:.0f}s)...')
             log.warning('[recover] Timed out waiting for main window')
 
-        # ── Step 5: Win32 keyboard fallback (cross-session only) ──
+        # ── Step 5: Win32 keyboard fallback (PostMessage — works without foreground) ──
         if not clicked_login:
             log.info('[recover] UIA didn\'t click login, trying Win32 fallback...')
+            # PostMessage sends keystrokes directly to the window, no foreground needed
             ctypes.windll.user32.SetForegroundWindow(hwnd)
-            time.sleep(0.5)
-            # Press Enter to dismiss popup
-            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0)
+            time.sleep(0.3)
+            # Send Enter via PostMessage (session-independent)
+            ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
             time.sleep(0.1)
-            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
-            time.sleep(1)
-            # Press Enter again (often lands on login button after popup)
-            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0)
+            ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
+            time.sleep(2)
+            # Second Enter (in case first dismissed a popup)
+            ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
             time.sleep(0.1)
-            ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
-            log.info('[recover] Win32 Enter × 2 sent')
+            ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
+            log.info('[recover] Win32 PostMessage Enter × 2 sent')
 
     except Exception as e:
         log.error(f'[recover] Error: {e}')
