@@ -668,24 +668,25 @@ class BridgeHandler(BaseHTTPRequestHandler):
             ]:
                 try:
                     key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path)
-                    path = winreg.QueryValueEx(key, 'InstallLocation')[0] if True else ''
+                    # Try DisplayIcon first, then InstallLocation
+                    value = ''
                     try:
-                        path = winreg.QueryValueEx(key, 'DisplayIcon')[0]
+                        value = winreg.QueryValueEx(key, 'DisplayIcon')[0]
                     except:
                         try:
-                            path = winreg.QueryValueEx(key, 'InstallLocation')[0]
+                            value = winreg.QueryValueEx(key, 'InstallLocation')[0]
                         except:
                             pass
-                    if path:
-                        path = path.replace(',0', '').strip('"')
-                        if not path.endswith('.exe'):
+                    if value:
+                        value = value.replace(',0', '').strip('"')
+                        if not value.endswith('.exe'):
                             for exe in ['Weixin.exe', 'WeChatAppEx.exe', 'WeChat.exe']:
-                                p = os.path.join(path, exe)
+                                p = os.path.join(value, exe)
                                 if os.path.exists(p):
                                     paths.insert(0, p)
                                     break
-                        elif os.path.exists(path):
-                            paths.insert(0, path)
+                        elif os.path.exists(value):
+                            paths.insert(0, value)
                 except Exception:
                     pass
 
