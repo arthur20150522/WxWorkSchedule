@@ -75,11 +75,12 @@ LAST_RECOVER_ACTION = 0      # timestamp of last recovery action (cooldown)
 def try_auto_recover():
     """Auto-recovery: reconnect wx4py if needed, then handle login page."""
     global _wx, LAST_RECOVER_ACTION
-    # Cooldown: if we did recovery action in last 10min, skip to avoid re-triggering
-    if time.time() - LAST_RECOVER_ACTION < 600:
-        return
     try:
         import ctypes, win32gui, win32con, time
+
+        # Cooldown: if we did recovery action in last 10min, skip to avoid re-triggering
+        if time.time() - LAST_RECOVER_ACTION < 600:
+            return
 
         def click_at(cx, cy):
             ctypes.windll.user32.SetCursorPos(cx, cy)
