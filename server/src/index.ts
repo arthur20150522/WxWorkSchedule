@@ -139,12 +139,14 @@ const main = async () => {
             execSync(`taskkill /F /IM ${exe}`, { encoding: 'utf-8', timeout: 3000, stdio: 'pipe' });
           } catch { /* not running — fine */ }
         }
-      } else if (hh === lh && mm === lm) {
-        // At launch time: start WeChat
+      } else if (hh === lh && mm >= lm && mm < lm + 5) {
+        // At launch time + 5m window: retry launch (WeChat may crash)
         try {
-          const result = await wxBridge.fetchBridge<{success:boolean;message?:string}>('/wechat-launch', 'POST');
-          console.log(`[WeChatSched] Launch at ${schedule.launchTime}: ${result.message || 'ok'}`);
-          await addLog('info', `WeChat 定时拉起: ${result.message || 'ok'}`);
+          const result = await wxBridge.fetchBridge<{success:boolean;launched?:boolean;message?:string}>('/wechat-launch', 'POST');
+          if (result.launched) {
+            console.log(`[WeChatSched] Launch at ${schedule.launchTime}: ${result.message || 'ok'}`);
+            await addLog('info', `WeChat 定时拉起: ${result.message || 'ok'}`);
+          }
         } catch (e) {
           console.error(`[WeChatSched] Launch failed: ${(e as Error).message}`);
         }
