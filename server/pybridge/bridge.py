@@ -58,6 +58,8 @@ def _task_worker():
         except Exception as e:
             with _tasks_lock:
                 _tasks[tid] = {'status': 'failed', 'result': None, 'error': str(e)}
+        # Small gap between tasks so WeChat can process the previous message
+        time.sleep(0.5)
     log.info('[queue] Send worker thread stopped')
 
 def get_wx():
@@ -1110,6 +1112,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 log.debug(f'[send] window restore error: {e}')
             ok = wx.chat_window.send_to(target, message, target_type=target_type)
             log.info(f'[send] to [{target_type}] {target}: {"OK" if ok else "FAIL"}')
+            # Retry once if first attempt failed (window may need to settle)
+            if not ok:
+                log.info(f'[send] retrying [{target_type}] {target} in 2s...')
+                t.sleep(2)
+                wx = get_wx()
+                ok2 = wx.chat_window.send_to(target, message, target_type=target_type)
+                log.info(f'[send] retry to [{target_type}] {target}: {"OK" if ok2 else "FAIL"}')
+                ok = ok2
             return ok
 
         tid = _start_task(_do_send)
