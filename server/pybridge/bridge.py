@@ -495,14 +495,26 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'error': str(e)})
 
     def _check_wechat_process(self):
-        """Check if WeChatAppEx.exe is running. Returns (running, pids)."""
+        """Check if WeChat is running. Uses wx4py window detection (reliable) + tasklist (detail)."""
+        running = False
+        pids = []
+        
+        # Method 1: wx4py window detection (most reliable, works across sessions)
+        try:
+            from wx4py.core.win32 import find_wechat_window
+            hwnd = find_wechat_window()
+            if hwnd:
+                running = True
+        except Exception:
+            pass
+        
+        # Method 2: tasklist for PID detail (may fail due to session isolation)
         import subprocess
         try:
             out = subprocess.check_output(
                 'tasklist /FO CSV /FI "IMAGENAME eq WeChatAppEx.exe"',
                 shell=True, encoding='gbk', errors='ignore'
             )
-            pids = []
             for line in out.strip().split('\n')[1:]:
                 parts = line.replace('"','').split(',')
                 if len(parts) >= 2 and parts[0].strip() == 'WeChatAppEx.exe':
@@ -510,9 +522,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         pids.append(int(parts[1].strip()))
                     except ValueError:
                         pass
-            return len(pids) > 0, pids
         except Exception:
-            return False, []
+            pass
+        
+        # Method 3: try psutil as last resort
+        if not running and not pids:
+            try:
+                import psutil
+                for proc in psutil.process_iter(['name']):
+                    if 'wechat' in (proc.info['name'] or '').lower():
+                        running = True
+                        pids.append(proc.pid)
+            except Exception:
+                pass
+                
+        return running or len(pids) > 0, pids
 
     def _handle_wechat_status(self):
         """GET /wechat-status — check if WeChat process is running."""
