@@ -442,6 +442,43 @@ apiRouter.post('/tasks/recover-failed', async (_req, res) => {
   }
 });
 
+// Quick recover: reset pushed-forward tasks back to today
+apiRouter.post('/tasks/quick-recover', async (_req, res) => {
+  try {
+    const db = await getDb();
+    let count = 0;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Start of today
+
+    await db.update(({ tasks }) => {
+      for (const t of tasks) {
+        // Only recover tasks that were explicitly pushed forward
+        const wasPushed = t.error && (
+          t.error.includes('已推到下次') ||
+          t.error.includes('手动清空队列')
+        );
+        if (!wasPushed || t.status !== 'pending') continue;
+
+        // Reset scheduleTime to today, keeping original HH:mm
+        const oldTime = new Date(t.scheduleTime);
+        if (isNaN(oldTime.getTime())) continue;
+
+        const newTime = new Date(today);
+        newTime.setHours(oldTime.getHours(), oldTime.getMinutes(), 0, 0);
+
+        t.scheduleTime = newTime.toISOString();
+        t.error = undefined;
+        count++;
+      }
+    });
+
+    await addLog('info', `Quick recover: ${count} tasks reset to today`);
+    res.json({ success: true, count });
+  } catch (e) {
+    handleError(res, e);
+  }
+});
+
 apiRouter.delete('/tasks/:id', async (req, res) => {
   try {
     const db = await getDb();

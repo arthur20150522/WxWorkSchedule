@@ -1,266 +1,620 @@
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
-import { verifyPassword, generateToken, verifyToken } from './auth.js';
 import { BotManager } from './botManager.js';
-import { DBManager, addLog, initDB } from './dbManager.js';
+import { getDb, addLog, addLiveLog, getLiveLogs } from './dbManager.js';
+import { verifyPassword, generateToken } from './auth.js';
+import { authenticateToken } from './authMiddleware.js';
 import { wxBridge } from './wxBridge.js';
-
+import { pushNotify } from './pushNotify.js';
+import { taskQueue } from './taskQueue.js';
+import { calculateNextTime } from './taskQueue.js';
 const app = express();
 app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
-
+app.use(bodyParser.json());
 const handleError = (res, e) => {
     console.error(e);
-    res.status(500).json({ error: e.message || 'Internal error' });
+    const message = e instanceof Error ? e.message : 'Unknown internal server error';
+    res.status(500).json({ error: message });
 };
-
-function auth(req, res, next) {
-    const header = req.headers.authorization;
-    if (!header || !header.startsWith('Bearer ')) return res.status(401).json({ error: '未登录' });
-    const user = verifyToken(header.slice(7));
-    if (!user) return res.status(401).json({ error: '登录过期' });
-    req.user = user;
-    next();
-}
-
-// ── Login/Logout ──────────────────────────────────────────
+// ── Login ────────────────────────────────────────────────
 app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
+    }
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     try {
-        const { username, password } = req.body;
-        if (!username || !password) return res.status(400).json({ error: '缺少用户名或密码' });
-        const ok = await verifyPassword(username, password);
-        if (!ok) return res.status(401).json({ error: '用户名或密码错误' });
-        res.json({ token: generateToken(username), username });
-    } catch (e) { handleError(res, e); }
-});
-
-app.post('/api/logout', auth, async (req, res) => {
-    try { res.json({ success: true }); } catch (e) { handleError(res, e); }
-});
-
-// ── Status ────────────────────────────────────────────────
-app.get('/api/status', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        const tasks = db.data.tasks || [];
-        let connected = false, error = null, bridgeState = 'unknown';
-        try {
-            const s = await wxBridge.status();
-            connected = s.connected;
-            bridgeState = s.state || 'unknown';
-            if (s.error) error = s.error;
-        } catch (e) { error = e.message; }
-        let taskStats = { total: tasks.length, once: 0, daily: 0, weekly: 0, monthly: 0, interval: 0, pending: 0, failed: 0, overduePending: 0 };
-        tasks.forEach(t => {
-            taskStats[t.recurrence || 'once'] = (taskStats[t.recurrence || 'once'] || 0) + 1;
-            if (t.status === 'pending') taskStats.pending++;
-            if (t.status === 'failed') taskStats.failed++;
-        });
-        res.json({
-            online: connected, bridgeState, status: connected ? 'logged_in' : 'offline', ready: connected,
-            user: connected ? { name: 'WeChat User', id: 'wx4py_user' } : null,
-            loginTime: null, error,
-            queueLength: 0, currentTarget: null, lastError: error,
-            taskStats,
-        });
-    } catch (e) { handleError(res, e); }
-});
-
-// ── Bridge Recover ────────────────────────────────────────
-app.post('/api/bridge/recover', auth, async (req, res) => {
-    try {
-        const result = await wxBridge.recover();
-        await addLog(req.user, 'info', `手动触发微信恢复`);
-        res.json(result);
-    } catch (e) { handleError(res, e); }
-});
-
-// ── Contacts ──────────────────────────────────────────────
-app.get('/api/contacts', auth, async (req, res) => {
-    try { const db = await DBManager.getDb('default'); res.json(db.data.contacts || []); }
-    catch (e) { handleError(res, e); }
-});
-app.post('/api/contacts', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        const contact = { id: Date.now().toString(), createdAt: new Date().toISOString(), ...req.body };
-        await db.update(({ contacts }) => contacts.push(contact));
-        res.json(contact);
-    } catch (e) { handleError(res, e); }
-});
-app.put('/api/contacts/:id', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        let updated = null;
-        await db.update(({ contacts }) => {
-            const idx = contacts.findIndex(c => c.id === req.params.id);
-            if (idx >= 0) { contacts[idx] = { ...contacts[idx], ...req.body }; updated = contacts[idx]; }
-        });
-        updated ? res.json(updated) : res.status(404).json({ error: 'not found' });
-    } catch (e) { handleError(res, e); }
-});
-app.delete('/api/contacts/:id', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        await db.update(({ contacts }) => contacts.splice(contacts.findIndex(c => c.id === req.params.id), 1));
-        res.json({ success: true });
-    } catch (e) { handleError(res, e); }
-});
-app.get('/api/contacts/scan', auth, async (req, res) => {
-    try {
-        const q = req.query.q || '';
-        const results = wxBridge.search ? await wxBridge.search(q, 'all') : [];
-        res.json(results);
-    } catch (e) { res.json([]); }
-});
-
-// ── Tasks ─────────────────────────────────────────────────
-app.get('/api/tasks', auth, async (req, res) => {
-    try { const db = await DBManager.getDb('default'); res.json(db.data.tasks || []); }
-    catch (e) { handleError(res, e); }
-});
-app.post('/api/tasks', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        const task = { id: Date.now().toString(), createdAt: new Date().toISOString(), status: 'pending', currentContentIndex: 0, ...req.body };
-        await db.update(({ tasks }) => tasks.push(task));
-        res.json(task);
-    } catch (e) { handleError(res, e); }
-});
-app.put('/api/tasks/:id', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        let updated = null;
-        await db.update(({ tasks }) => {
-            const idx = tasks.findIndex(t => t.id === req.params.id);
-            if (idx >= 0) { tasks[idx] = { ...tasks[idx], ...req.body }; updated = tasks[idx]; }
-        });
-        updated ? res.json(updated) : res.status(404).json({ error: 'not found' });
-    } catch (e) { handleError(res, e); }
-});
-app.delete('/api/tasks/:id', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        await db.update(({ tasks }) => tasks.splice(tasks.findIndex(t => t.id === req.params.id), 1));
-        res.json({ success: true });
-    } catch (e) { handleError(res, e); }
-});
-app.delete('/api/tasks/batch-delete', auth, async (req, res) => {
-    try {
-        const { ids } = req.body;
-        const db = await DBManager.getDb('default');
-        const deleted = [];
-        await db.update(({ tasks }) => {
-            for (const id of ids) {
-                const idx = tasks.findIndex(t => t.id === id);
-                if (idx >= 0) { deleted.push(tasks[idx]); tasks.splice(idx, 1); }
-            }
-        });
-        res.json({ deleted: deleted.length });
-    } catch (e) { handleError(res, e); }
-});
-app.post('/api/tasks/cancel-pending', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        let cancelled = 0, rescheduled = 0;
-        await db.update(({ tasks }) => {
-            tasks.forEach(t => {
-                if (t.status === 'pending' || t.status === 'processing') {
-                    if (t.recurrence && t.recurrence !== 'once') { t.status = 'pending'; rescheduled++; }
-                    else { t.status = 'failed'; cancelled++; }
-                }
-            });
-        });
-        res.json({ cancelled, rescheduled });
-    } catch (e) { handleError(res, e); }
-});
-app.post('/api/tasks/recover-failed', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        let count = 0;
-        await db.update(({ tasks }) => tasks.forEach(t => { if (t.status === 'failed' && t.recurrence && t.recurrence !== 'once') { t.status = 'pending'; count++; } }));
-        res.json({ recovered: count });
-    } catch (e) { handleError(res, e); }
-});
-
-// ── Templates ─────────────────────────────────────────────
-app.get('/api/templates', auth, async (req, res) => {
-    try { const db = await DBManager.getDb('default'); res.json(db.data.templates || []); }
-    catch (e) { handleError(res, e); }
-});
-app.post('/api/templates', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        const tpl = { id: Date.now().toString(), createdAt: new Date().toISOString(), ...req.body };
-        await db.update(({ templates }) => templates.push(tpl));
-        res.json(tpl);
-    } catch (e) { handleError(res, e); }
-});
-app.put('/api/templates/:id', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        let updated = null;
-        await db.update(({ templates }) => {
-            const idx = templates.findIndex(t => t.id === req.params.id);
-            if (idx >= 0) { templates[idx] = { ...templates[idx], ...req.body }; updated = templates[idx]; }
-        });
-        updated ? res.json(updated) : res.status(404).json({ error: 'not found' });
-    } catch (e) { handleError(res, e); }
-});
-app.delete('/api/templates/:id', auth, async (req, res) => {
-    try {
-        const db = await DBManager.getDb('default');
-        await db.update(({ templates }) => templates.splice(templates.findIndex(t => t.id === req.params.id), 1));
-        res.json({ success: true });
-    } catch (e) { handleError(res, e); }
-});
-
-// ── Logs ──────────────────────────────────────────────────
-app.get('/api/logs', auth, async (req, res) => {
-    try { const db = await DBManager.getDb('default'); res.json(db.data.logs || []); }
-    catch (e) { handleError(res, e); }
-});
-app.get('/api/live-logs', auth, async (req, res) => {
-    try { const db = await DBManager.getDb('default'); res.json(db.data.liveLogs || []); }
-    catch (e) { handleError(res, e); }
-});
-
-// ── Live Send ─────────────────────────────────────────────
-app.post('/api/send-live', auth, async (req, res) => {
-    try {
-        const { target, message, targetType } = req.body;
-        const start = Date.now();
-        const result = await wxBridge.send(target, message, targetType);
-        const duration = Date.now() - start;
-        const db = await DBManager.getDb('default');
-        const logEntry = { id: Date.now().toString() + Math.random().toString(36).slice(2, 8), timestamp: new Date().toISOString(), targetName: target, targetType: targetType || 'contact', content: message, success: true, duration };
-        await db.update(({ liveLogs }) => liveLogs.push(logEntry));
-        res.json({ success: true, duration, ...result });
-    } catch (e) {
-        const db = await DBManager.getDb('default');
-        const logEntry = { id: Date.now().toString() + Math.random().toString(36).slice(2, 8), timestamp: new Date().toISOString(), targetName: req.body.target, targetType: req.body.targetType || 'contact', content: req.body.message, success: false, duration: 0, error: e.message };
-        await db.update(({ liveLogs }) => liveLogs.push(logEntry));
+        const isValid = await verifyPassword(username, password);
+        if (isValid) {
+            const token = generateToken(username);
+            await addLog('info', `User "${username}" logged in from ${ip}`);
+            res.json({ success: true, token, username });
+        }
+        else {
+            console.warn(`[Auth] Failed login for "${username}" from ${ip}`);
+            res.status(401).json({ error: 'Invalid credentials' });
+        }
+    }
+    catch (e) {
         handleError(res, e);
     }
 });
-
-// ── Data Export/Import ────────────────────────────────────
-app.get('/api/data/export', auth, async (req, res) => {
-    try { const db = await DBManager.getDb('default'); res.json({ contacts: db.data.contacts, tasks: db.data.tasks, templates: db.data.templates }); }
-    catch (e) { handleError(res, e); }
-});
-app.post('/api/data/import', auth, async (req, res) => {
+// ── Protected routes ─────────────────────────────────────
+const apiRouter = express.Router();
+apiRouter.use(authenticateToken);
+// Logout
+apiRouter.post('/logout', async (req, res) => {
     try {
-        const { contacts, tasks, templates } = req.body;
-        const db = await DBManager.getDb('default');
-        await db.update(d => {
-            if (contacts) d.contacts = contacts;
-            if (tasks) d.tasks = tasks;
-            if (templates) d.templates = templates;
-        });
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        await addLog('info', `Admin logged out from ${ip}`);
         res.json({ success: true });
-    } catch (e) { handleError(res, e); }
+    }
+    catch (e) {
+        handleError(res, e);
+    }
 });
-
+// ── Bot Status (含队列信息 + 任务大盘) ───────────────────
+apiRouter.get('/status', async (_req, res) => {
+    try {
+        let online = false;
+        let error = null;
+        let healthReason = null;
+        let healthStage = null;
+        try {
+            // Use deep health for accurate status
+            const h = await wxBridge.deepHealth();
+            online = h.ok;
+            if (!h.ok) {
+                healthReason = h.reason || '未知';
+                healthStage = h.stage || '?';
+            }
+        }
+        catch (e) {
+            error = e.message;
+            // Fallback to shallow status
+            try {
+                const s = await wxBridge.status();
+                online = s.connected;
+            }
+            catch { }
+        }
+        const botStatus = BotManager.getStatus();
+        const lastError = taskQueue.lastError || error;
+        // 任务大盘 — 按重复类型统计
+        const db = await getDb();
+        const all = db.data.tasks;
+        const now = new Date();
+        const taskStats = {
+            total: all.length,
+            once: all.filter(t => (t.recurrence || 'once') === 'once').length,
+            daily: all.filter(t => t.recurrence === 'daily').length,
+            weekly: all.filter(t => t.recurrence === 'weekly').length,
+            monthly: all.filter(t => t.recurrence === 'monthly').length,
+            interval: all.filter(t => t.recurrence === 'interval').length,
+            pending: all.filter(t => t.status === 'pending').length,
+            failed: all.filter(t => t.status === 'failed').length,
+            overduePending: all.filter(t => t.status === 'pending' && new Date(t.scheduleTime) <= now).length,
+        };
+        res.json({
+            online,
+            queueLength: taskQueue.length,
+            currentTarget: taskQueue.currentTarget,
+            lastError: lastError || undefined,
+            loginTime: botStatus.loginTime,
+            taskStats,
+            healthReason: healthReason || undefined,
+            healthStage: healthStage || undefined,
+        });
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+// Restart bridge
+apiRouter.post('/bot/restart', async (req, res) => {
+    try {
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        await addLog('info', `Bridge restart requested from ${ip}`);
+        const ok = await BotManager.restart();
+        res.json({ success: ok, message: ok ? 'Bridge reconnected' : 'Bridge not reachable' });
+    }
+    catch (e) {
+        await addLog('error', `Bridge restart failed: ${e instanceof Error ? e.message : String(e)}`);
+        handleError(res, e);
+    }
+});
+// Trigger bridge auto-recovery (dismiss popups, click login)
+apiRouter.post('/bridge/recover', async (_req, res) => {
+    try {
+        const result = await wxBridge.recover();
+        await addLog('info', `Bridge recover triggered: ${result.message || 'ok'}`);
+        res.json({ success: true, message: result.message || '恢复已触发' });
+    }
+    catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await addLog('error', `Bridge recover failed: ${msg}`);
+        res.status(500).json({ success: false, error: msg });
+    }
+});
+// ── Contacts (通讯录 CRUD) ───────────────────────────────
+apiRouter.get('/contacts', async (_req, res) => {
+    try {
+        const db = await getDb();
+        res.json(db.data.contacts || []);
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+apiRouter.post('/contacts', async (req, res) => {
+    try {
+        const db = await getDb();
+        const contact = {
+            id: Date.now().toString(),
+            name: req.body.name,
+            type: req.body.type || 'contact',
+            note: req.body.note || '',
+            createdAt: new Date().toISOString(),
+        };
+        await db.update(({ contacts }) => contacts.push(contact));
+        await addLog('info', `Added contact: ${contact.name} (${contact.type})`);
+        res.json(contact);
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+apiRouter.put('/contacts/:id', async (req, res) => {
+    try {
+        const db = await getDb();
+        const { id } = req.params;
+        let updated = null;
+        await db.update(({ contacts }) => {
+            const index = contacts.findIndex(c => c.id === id);
+            if (index > -1) {
+                contacts[index] = { ...contacts[index], ...req.body, id };
+                updated = contacts[index];
+            }
+        });
+        if (updated) {
+            await addLog('info', `Updated contact: ${id}`);
+            res.json(updated);
+        }
+        else {
+            res.status(404).json({ error: 'Contact not found' });
+        }
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+apiRouter.delete('/contacts/:id', async (req, res) => {
+    try {
+        const db = await getDb();
+        const { id } = req.params;
+        await db.update(({ contacts }) => {
+            const idx = contacts.findIndex(c => c.id === id);
+            if (idx > -1)
+                contacts.splice(idx, 1);
+        });
+        await addLog('info', `Deleted contact: ${id}`);
+        res.json({ success: true });
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+// Scan helper — search WeChat contacts/groups by keyword
+apiRouter.get('/contacts/scan', async (req, res) => {
+    const q = req.query.q || '';
+    if (!q)
+        return res.json({ results: [] });
+    try {
+        const results = await wxBridge.search(q, 'all');
+        res.json({ results });
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+// ── Templates ────────────────────────────────────────────
+apiRouter.get('/templates', async (_req, res) => {
+    try {
+        const db = await getDb();
+        res.json(db.data.templates || []);
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+apiRouter.post('/templates', async (req, res) => {
+    try {
+        const db = await getDb();
+        const template = {
+            id: Date.now().toString(),
+            ...req.body,
+            createdAt: new Date().toISOString(),
+        };
+        await db.update(({ templates }) => {
+            if (!templates)
+                templates = [];
+            templates.push(template);
+        });
+        await addLog('info', `Created template: ${template.name}`);
+        res.json(template);
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+apiRouter.put('/templates/:id', async (req, res) => {
+    try {
+        const db = await getDb();
+        const { id } = req.params;
+        let updated = null;
+        await db.update(({ templates }) => {
+            const index = templates.findIndex(t => t.id === id);
+            if (index > -1) {
+                templates[index] = { ...templates[index], ...req.body, id };
+                updated = templates[index];
+            }
+        });
+        if (updated) {
+            await addLog('info', `Updated template: ${id}`);
+            res.json(updated);
+        }
+        else {
+            res.status(404).json({ error: 'Template not found' });
+        }
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+apiRouter.delete('/templates/:id', async (req, res) => {
+    try {
+        const db = await getDb();
+        const { id } = req.params;
+        await db.update(({ templates }) => {
+            const idx = templates.findIndex(t => t.id === id);
+            if (idx > -1)
+                templates.splice(idx, 1);
+        });
+        await addLog('info', `Deleted template: ${id}`);
+        res.json({ success: true });
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+// ── Tasks ────────────────────────────────────────────────
+apiRouter.get('/tasks', async (_req, res) => {
+    try {
+        const db = await getDb();
+        res.json(db.data.tasks);
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+apiRouter.post('/tasks', async (req, res) => {
+    try {
+        const db = await getDb();
+        // 计算 scheduleTime：优先用请求中的，否则从 uiTime + recurrence 推算
+        let scheduleTime = req.body.scheduleTime;
+        if (!scheduleTime || isNaN(new Date(scheduleTime).getTime())) {
+            const recurrence = req.body.recurrence || 'once';
+            if (recurrence === 'once') {
+                return res.status(400).json({ error: 'scheduleTime is required for one-time tasks' });
+            }
+            // 从 uiTime 推算首次执行时间
+            const now = new Date();
+            const [h, m] = (req.body.uiTime || '09:00').split(':').map(Number);
+            const next = new Date();
+            next.setHours(h || 9, m || 0, 0, 0);
+            if (next <= now)
+                next.setDate(next.getDate() + 1);
+            scheduleTime = next.toISOString();
+        }
+        const task = {
+            id: Date.now().toString(),
+            ...req.body,
+            scheduleTime,
+            recurrence: req.body.recurrence || 'once',
+            status: 'pending',
+            currentContentIndex: 0,
+            createdAt: new Date().toISOString(),
+        };
+        await db.update(({ tasks }) => tasks.push(task));
+        await addLog('info', `Task ${task.id}【${task.targetName}】已创建 (${task.recurrence})`);
+        res.json(task);
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+apiRouter.put('/tasks/:id', async (req, res) => {
+    try {
+        const db = await getDb();
+        const { id } = req.params;
+        let updatedTask = null;
+        await db.update(({ tasks }) => {
+            const index = tasks.findIndex(t => String(t.id) === String(id));
+            if (index > -1) {
+                const existing = tasks[index];
+                const merged = {
+                    ...existing,
+                    ...req.body,
+                    id: existing.id,
+                    createdAt: existing.createdAt,
+                    updatedAt: new Date().toISOString(),
+                };
+                // Reset failed/success tasks to pending
+                if (['success', 'failed', 'processing'].includes(existing.status)) {
+                    merged.status = 'pending';
+                    merged.error = undefined;
+                }
+                tasks[index] = merged;
+                updatedTask = merged;
+            }
+        });
+        if (updatedTask) {
+            await addLog('info', `Updated task ${id}`);
+            res.json(updatedTask);
+        }
+        else {
+            res.status(404).json({ error: 'Task not found' });
+        }
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+apiRouter.delete('/tasks/batch-delete', async (req, res) => {
+    try {
+        const db = await getDb();
+        const { ids } = req.body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: 'Invalid or empty ids array' });
+        }
+        let deletedCount = 0;
+        await db.update(({ tasks }) => {
+            for (let i = tasks.length - 1; i >= 0; i--) {
+                if (ids.includes(tasks[i].id)) {
+                    tasks.splice(i, 1);
+                    deletedCount++;
+                }
+            }
+        });
+        await addLog('info', `Batch deleted ${deletedCount} tasks`);
+        res.json({ success: true, count: deletedCount });
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+// Emergency: cancel all pending tasks
+apiRouter.post('/tasks/cancel-pending', async (_req, res) => {
+    try {
+        const db = await getDb();
+        let cancelled = 0;
+        let rescheduled = 0;
+        await db.update(({ tasks }) => {
+            for (const t of tasks) {
+                if (t.status === 'pending' || t.status === 'processing') {
+                    if (t.recurrence && t.recurrence !== 'once') {
+                        // Recurring: push to next time, don't fail
+                        t.scheduleTime = calculateNextTime(t);
+                        t.status = 'pending';
+                        t.error = '手动清空队列 → 已推到下次';
+                        rescheduled++;
+                    }
+                    else {
+                        // One-time: mark failed
+                        t.status = 'failed';
+                        t.error = t.error || '手动紧急取消';
+                        cancelled++;
+                    }
+                }
+            }
+        });
+        await addLog('warn', `Emergency cancel: ${cancelled} one-time tasks → failed, ${rescheduled} recurring → rescheduled`);
+        res.json({ success: true, cancelled, rescheduled });
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+// Recover: reset failed recurring tasks to pending
+apiRouter.post('/tasks/recover-failed', async (_req, res) => {
+    try {
+        const db = await getDb();
+        let count = 0;
+        await db.update(({ tasks }) => {
+            for (const t of tasks) {
+                if (t.status === 'failed' && t.recurrence && t.recurrence !== 'once') {
+                    t.status = 'pending';
+                    t.error = undefined;
+                    count++;
+                }
+            }
+        });
+        await addLog('info', `Recovered ${count} failed recurring tasks → pending`);
+        res.json({ success: true, count });
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+// Quick recover: reset pushed-forward tasks back to today
+apiRouter.post('/tasks/quick-recover', async (_req, res) => {
+    try {
+        const db = await getDb();
+        let count = 0;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Start of today
+        await db.update(({ tasks }) => {
+            for (const t of tasks) {
+                // Only recover tasks that were explicitly pushed forward
+                const wasPushed = t.error && (t.error.includes('已推到下次') ||
+                    t.error.includes('手动清空队列'));
+                if (!wasPushed || t.status !== 'pending')
+                    continue;
+                // Reset scheduleTime to today, keeping original HH:mm
+                const oldTime = new Date(t.scheduleTime);
+                if (isNaN(oldTime.getTime()))
+                    continue;
+                const newTime = new Date(today);
+                newTime.setHours(oldTime.getHours(), oldTime.getMinutes(), 0, 0);
+                t.scheduleTime = newTime.toISOString();
+                t.error = undefined;
+                count++;
+            }
+        });
+        await addLog('info', `Quick recover: ${count} tasks reset to today`);
+        res.json({ success: true, count });
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+apiRouter.delete('/tasks/:id', async (req, res) => {
+    try {
+        const db = await getDb();
+        const { id } = req.params;
+        let deleted = false;
+        await db.update(({ tasks }) => {
+            const index = tasks.findIndex(t => String(t.id) === String(id));
+            if (index > -1) {
+                tasks.splice(index, 1);
+                deleted = true;
+            }
+        });
+        if (deleted) {
+            await addLog('info', `Task ${id} deleted`);
+            res.json({ success: true });
+        }
+        else {
+            res.status(404).json({ error: 'Task not found' });
+        }
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+// ── Logs ─────────────────────────────────────────────────
+apiRouter.get('/logs', async (_req, res) => {
+    try {
+        const db = await getDb();
+        res.json(db.data.logs.slice(-100).reverse());
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+// ── Data Export / Import ─────────────────────────────────
+// 全量导出（不含日志）
+apiRouter.get('/data/export', async (_req, res) => {
+    try {
+        const db = await getDb();
+        const { logs, ...rest } = db.data;
+        res.json(rest);
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+// 全量导入（合并模式：同 id 跳过，新数据追加）
+apiRouter.post('/data/import', async (req, res) => {
+    try {
+        const incoming = req.body;
+        if (!incoming || typeof incoming !== 'object') {
+            return res.status(400).json({ error: 'Invalid data format' });
+        }
+        const db = await getDb();
+        let added = { contacts: 0, templates: 0, tasks: 0 };
+        await db.update((data) => {
+            if (Array.isArray(incoming.contacts)) {
+                for (const c of incoming.contacts) {
+                    if (!c.id || !c.name)
+                        continue;
+                    if (!data.contacts.find(x => x.id === c.id)) {
+                        data.contacts.push(c);
+                        added.contacts++;
+                    }
+                }
+            }
+            if (Array.isArray(incoming.templates)) {
+                for (const t of incoming.templates) {
+                    if (!t.id || !t.name)
+                        continue;
+                    if (!data.templates.find(x => x.id === t.id)) {
+                        data.templates.push(t);
+                        added.templates++;
+                    }
+                }
+            }
+            if (Array.isArray(incoming.tasks)) {
+                for (const t of incoming.tasks) {
+                    if (!t.id || !t.targetName)
+                        continue;
+                    if (!data.tasks.find(x => x.id === t.id)) {
+                        data.tasks.push(t);
+                        added.tasks++;
+                    }
+                }
+            }
+        });
+        const total = added.contacts + added.templates + added.tasks;
+        await addLog('info', `Data imported: ${added.contacts}C + ${added.templates}T + ${added.tasks}K = ${total}`);
+        res.json({ success: true, ...added, total });
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+// ── Live Send ────────────────────────────────────────────
+apiRouter.post('/send-live', async (req, res) => {
+    const { targetName, targetType, content } = req.body;
+    if (!targetName || !targetType || !content) {
+        return res.status(400).json({ success: false, error: 'targetName, targetType, and content are required' });
+    }
+    if (!['group', 'contact'].includes(targetType)) {
+        return res.status(400).json({ success: false, error: 'targetType must be "group" or "contact"' });
+    }
+    const startTime = Date.now();
+    try {
+        const result = await wxBridge.send(targetName, content, targetType);
+        const duration = Date.now() - startTime;
+        await addLiveLog({ targetName, targetType, content, success: result.success, duration, error: result.error || undefined });
+        if (result.success) {
+            await addLog('info', `Live send to [${targetType}] ${targetName}: success (${duration}ms)`);
+        }
+        else {
+            await addLog('error', `Live send to [${targetType}] ${targetName}: failed — ${result.error || 'unknown'}`);
+            pushNotify('实时发送失败', `[${targetType === 'group' ? '群' : '人'}] ${targetName}: ${result.error || 'unknown'}`);
+        }
+        res.json({ success: result.success, duration, error: result.error || null });
+    }
+    catch (e) {
+        const duration = Date.now() - startTime;
+        const error = e.message;
+        await addLiveLog({ targetName, targetType, content, success: false, duration, error });
+        await addLog('error', `Live send to [${targetType}] ${targetName}: exception — ${error}`);
+        pushNotify('实时发送异常', `[${targetType === 'group' ? '群' : '人'}] ${targetName}: ${error}`);
+        res.json({ success: false, duration, error });
+    }
+});
+// ── Live Logs ────────────────────────────────────────────
+apiRouter.get('/live-logs', async (_req, res) => {
+    try {
+        const logs = await getLiveLogs();
+        res.json(logs);
+    }
+    catch (e) {
+        handleError(res, e);
+    }
+});
+app.use('/api', apiRouter);
 export { app };

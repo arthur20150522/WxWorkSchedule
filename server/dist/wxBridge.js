@@ -5,9 +5,11 @@
 const BRIDGE_URL = process.env.WX_BRIDGE_URL || 'http://127.0.0.1:39800';
 async function fetchBridge(path, options) {
     const url = `${BRIDGE_URL}${path}`;
+    const timeout = options?.signal ? undefined : AbortSignal.timeout(30000);
     try {
         const resp = await fetch(url, {
             ...options,
+            signal: timeout || options?.signal,
             headers: { 'Content-Type': 'application/json', ...options?.headers },
         });
         if (!resp.ok) {
@@ -17,6 +19,9 @@ async function fetchBridge(path, options) {
         return await resp.json();
     }
     catch (e) {
+        if (e.name === 'AbortError' || e.name === 'TimeoutError') {
+            throw new Error('wx4py bridge request timeout (30s)');
+        }
         if (e.cause?.code === 'ECONNREFUSED') {
             throw new Error('wx4py bridge is not running. Start it with: python bridge.py');
         }
@@ -24,7 +29,7 @@ async function fetchBridge(path, options) {
     }
 }
 export const wxBridge = {
-    /** Check if the bridge is healthy */
+    /** Quick health check */
     async health() {
         try {
             const data = await fetchBridge('/health');
@@ -33,6 +38,10 @@ export const wxBridge = {
         catch {
             return false;
         }
+    },
+    /** Deep health check: verifies WeChat UI is actually usable */
+    async deepHealth() {
+        return fetchBridge('/deep-health');
     },
     /** Get WeChat connection status */
     async status() {
@@ -58,17 +67,17 @@ export const wxBridge = {
     async send(target, message, targetType) {
         return fetchBridge('/send', {
             method: 'POST',
-            body: JSON.stringify({ target, message, target_type: targetType || 'contact' }),
+            body: JSON.stringify({ target, message, targetType }),
         });
     },
     /** Batch send to multiple targets */
     async batchSend(targets, message, targetType) {
         return fetchBridge('/batch-send', {
             method: 'POST',
-            body: JSON.stringify({ targets, message, target_type: targetType || 'contact' }),
+            body: JSON.stringify({ targets, message, targetType }),
         });
     },
-    /** Trigger auto-recovery (dismiss popup + click login) */
+    /** Trigger auto-recovery: dismiss popups, click login button */
     async recover() {
         return fetchBridge('/recover');
     },

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RefreshCw, CheckCircle, XCircle, Loader2, AlertTriangle, BarChart3, ShieldOff, LogIn } from 'lucide-react';
+import { RefreshCw, CheckCircle, XCircle, Loader2, AlertTriangle, BarChart3, ShieldOff, LogIn, Zap } from 'lucide-react';
 import clsx from 'clsx';
 import { t } from '../utils/i18n';
 import { BotStatus, TaskStats } from '../types';
@@ -211,6 +211,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     className="w-full py-2.5 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2"
                 >
                     <RefreshCw className="w-4 h-4" />恢复失败周期任务
+                </button>
+            </div>
+
+            {/* 快速恢复 — 一键拉回今天 */}
+            <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-5">
+                <h3 className="font-bold text-yellow-800 text-sm mb-3 flex items-center gap-1">
+                    <Zap className="w-4 h-4" />
+                    快速恢复
+                </h3>
+                <p className="text-yellow-600 text-xs mb-3 leading-relaxed">
+                    将所有被推后的任务（"已推到下次"）重新排到今天。微信掉线恢复后一键拉回。
+                </p>
+                <button
+                    onClick={async () => {
+                        if (!confirm('确认将所有被推后的任务重置到今天吗？\n\n这些任务会保持原来的发送时间（如午餐11:00），但日期改为今天。')) return;
+                        try {
+                            const res = await axios.post('/api/tasks/quick-recover');
+                            showToast(`已恢复 ${res.data.count} 个任务到今日`, 'success');
+                            fetchTasks();
+                        } catch (e: any) {
+                            showToast('恢复失败: ' + (e.response?.data?.error || e.message), 'error');
+                        }
+                    }}
+                    className="w-full py-2.5 bg-yellow-600 text-white font-bold rounded-lg hover:bg-yellow-700 transition flex items-center justify-center gap-2"
+                >
+                    <Zap className="w-4 h-4" />快速恢复今日任务
                 </button>
             </div>
 

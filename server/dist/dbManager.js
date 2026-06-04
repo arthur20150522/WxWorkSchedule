@@ -1,51 +1,160 @@
 import { JSONFilePreset } from 'lowdb/node';
+import fs from 'fs';
 import path from 'path';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const DB_PATH = path.resolve(__dirname, '..', 'db.json');
-const defaultData = { tasks: [], templates: [], contacts: [], logs: [], liveLogs: [] };
-
-export class DBManager {
-    static _db = null;
-
-    static async getDb(_username) {
-        if (this._db) return this._db;
-        console.log(`Loading DB from ${DB_PATH}`);
-        this._db = await JSONFilePreset(DB_PATH, defaultData);
-        await this._db.update((data) => {
-            if (!data.templates) data.templates = [];
-            if (!data.tasks) data.tasks = [];
-            if (!data.contacts) data.contacts = [];
-            if (!data.logs) data.logs = [];
-            if (!data.liveLogs) data.liveLogs = [];
-            data.tasks.forEach((t) => {
-                if (typeof t.content === 'string') t.content = [t.content];
-                if (typeof t.currentContentIndex === 'undefined') t.currentContentIndex = 0;
-                if (t.status === 'processing') {
-                    console.log(`[DBManager] Recovering stuck task ${t.id} -> pending`);
-                    t.status = 'pending';
-                }
-            });
-            data.templates.forEach((t) => {
-                if (typeof t.content === 'string') t.content = [t.content];
-            });
+const MAX_LOG_ENTRIES = 500;
+const defaultData = {
+    contacts: [],
+    tasks: [],
+    templates: [],
+    logs: [],
+    liveLogs: [],
+};
+let dbInstance = null;
+export async function initDB() {
+    if (dbInstance)
+        return dbInstance;
+    console.log(`[DB] Initializing at ${DB_PATH}`);
+    const db = await JSONFilePreset(DB_PATH, defaultData);
+    // Ensure all arrays exist
+    await db.update((data) => {
+        if (!data.contacts)
+            data.contacts = [];
+        if (!data.tasks)
+            data.tasks = [];
+        if (!data.templates)
+            data.templates = [];
+        if (!data.logs)
+            data.logs = [];
+        if (!data.liveLogs)
+            data.liveLogs = [];
+        // Migration: string content → string[]
+        data.tasks.forEach((t) => {
+            if (typeof t.content === 'string')
+                t.content = [t.content];
+            if (typeof t.currentContentIndex === 'undefined')
+                t.currentContentIndex = 0;
+            if (t.status === 'processing') {
+                console.log(`[DB] Recovering stuck task ${t.id} → pending`);
+                t.status = 'pending';
+            }
+            // Migration: uiWeekday/uiWeekdays → weeklySlots
+            if ((t.uiWeekdays || t.uiWeekday) && !t.weeklySlots) {
+                const days = t.uiWeekdays || (t.uiWeekday ? [t.uiWeekday] : ['1']);
+                t.weeklySlots = [{ days, time: t.uiTime || '09:00' }];
+            }
         });
-        return this._db;
+        data.templates.forEach((t) => {
+            if (typeof t.content === 'string')
+                t.content = [t.content];
+            if ((t.uiWeekdays || t.uiWeekday) && !t.weeklySlots) {
+                const days = t.uiWeekdays || (t.uiWeekday ? [t.uiWeekday] : ['1']);
+                t.weeklySlots = [{ days, time: t.uiTime || '09:00' }];
+            }
+        });
+        // Trim logs to prevent DB bloat
+        if (data.logs && data.logs.length > MAX_LOG_ENTRIES) {
+            const trimmed = data.logs.length - MAX_LOG_ENTRIES;
+            data.logs = data.logs.slice(-MAX_LOG_ENTRIES);
+            console.log(`[DB] Trimmed ${trimmed} old log entries (keeping last ${MAX_LOG_ENTRIES})`);
+        }
+    });
+    // Migrate from legacy multi-user directories
+    await migrateFromLegacy(db);
+    dbInstance = db;
+    return db;
+}
+export async function getDb() {
+    if (!dbInstance) {
+        return initDB();
+    }
+    return dbInstance;
+}
+async function migrateFromLegacy(db) {
+    const usersDir = path.resolve(process.cwd(), 'users');
+    if (!fs.existsSync(usersDir))
+        return;
+    console.log('[DB] Detected legacy users/ directory, migrating...');
+    try {
+        const userDirs = fs.readdirSync(usersDir);
+        let migratedTasks = 0;
+        let migratedTemplates = 0;
+        for (const userDir of userDirs) {
+            const oldDbPath = path.join(usersDir, userDir, 'db.json');
+            if (!fs.existsSync(oldDbPath))
+                continue;
+            try {
+                const oldData = JSON.parse(fs.readFileSync(oldDbPath, 'utf-8'));
+                if (oldData.tasks) {
+                    for (const task of oldData.tasks) {
+                        // Skip if already exists (by id)
+                        if (db.data.tasks.find(t => t.id === task.id))
+                            continue;
+                        if (typeof task.content === 'string')
+                            task.content = [task.content];
+                        if (typeof task.currentContentIndex === 'undefined')
+                            task.currentContentIndex = 0;
+                        db.data.tasks.push(task);
+                        migratedTasks++;
+                    }
+                }
+                if (oldData.templates) {
+                    for (const tpl of oldData.templates) {
+                        if (db.data.templates.find(t => t.id === tpl.id))
+                            continue;
+                        if (typeof tpl.content === 'string')
+                            tpl.content = [tpl.content];
+                        db.data.templates.push(tpl);
+                        migratedTemplates++;
+                    }
+                }
+            }
+            catch (e) {
+                console.error(`[DB] Failed to migrate from ${oldDbPath}:`, e);
+            }
+        }
+        await db.write();
+        console.log(`[DB] Migration complete: ${migratedTasks} tasks, ${migratedTemplates} templates`);
+        console.log('[DB] Legacy users/ directory kept for safety — you can delete it manually');
+    }
+    catch (e) {
+        console.error('[DB] Legacy migration failed:', e);
     }
 }
-
-export const addLog = async (username, level, message, taskId) => {
-    const db = await DBManager.getDb(username);
-    await db.update(({ logs }) => logs.push({
-        id: Date.now().toString(),
-        timestamp: new Date().toISOString(),
-        level,
-        message,
-        taskId
-    }));
-};
-
-export const initDB = async () => {
-    return DBManager.getDb('default');
-};
+export async function addLog(level, message, taskId) {
+    const db = await getDb();
+    await db.update(({ logs }) => {
+        logs.push({
+            id: Date.now().toString() + Math.random().toString(36).slice(2),
+            timestamp: new Date().toISOString(),
+            level,
+            message,
+            taskId,
+        });
+        // Keep only the latest N entries
+        if (logs.length > MAX_LOG_ENTRIES) {
+            logs.splice(0, logs.length - MAX_LOG_ENTRIES);
+        }
+    });
+}
+const MAX_LIVELOG_ENTRIES = 200;
+export async function addLiveLog(data) {
+    const db = await getDb();
+    await db.update(({ liveLogs }) => {
+        liveLogs.unshift({
+            id: Date.now().toString() + Math.random().toString(36).slice(2),
+            timestamp: new Date().toISOString(),
+            ...data,
+        });
+        if (liveLogs.length > MAX_LIVELOG_ENTRIES) {
+            liveLogs.splice(MAX_LIVELOG_ENTRIES);
+        }
+    });
+}
+export async function getLiveLogs() {
+    const db = await getDb();
+    return db.data.liveLogs;
+}
