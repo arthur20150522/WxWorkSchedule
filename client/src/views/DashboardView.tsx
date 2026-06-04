@@ -67,19 +67,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
 
     // Fetch WeChat schedule
-    const fetchWechatSchedule = async () => {
+    const fetchWechatSchedule = async (retryOnFail = false) => {
         try {
             const res = await axios.get('/api/wechat/schedule');
             setWechatSched(res.data);
         } catch {
-            setWechatSched(null);
+            if (retryOnFail) {
+                // Retry after 2s on first mount failure
+                setTimeout(() => fetchWechatSchedule(false), 2000);
+            } else {
+                setWechatSched(null);
+            }
         }
     };
 
     useEffect(() => {
         fetchWechatStatus();
-        fetchWechatSchedule();
-        const iv = setInterval(fetchWechatStatus, 30000);
+        fetchWechatSchedule(true);  // retry on first mount failure
+        const iv = setInterval(() => {
+            fetchWechatStatus();
+            fetchWechatSchedule();
+        }, 30000);
         return () => clearInterval(iv);
     }, []);
 
