@@ -155,8 +155,11 @@ def try_auto_recover():
             all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
 
             def _uia_click(e, label):
-                """Try InvokePattern first. If unresponsive after 3s, fall back to coordinate click."""
-                import ctypes
+                """Try InvokePattern → coordinate click → PostMessage click (session-independent)."""
+                import ctypes, struct
+                br = e.CurrentBoundingRectangle
+                cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
+
                 # Step A: try InvokePattern
                 try:
                     pattern_obj = e.GetCurrentPattern(UIA.UIA_InvokePatternId)
@@ -164,7 +167,6 @@ def try_auto_recover():
                         invoke = pattern_obj.QueryInterface(UIA.IUIAutomationInvokePattern)
                         invoke.Invoke()
                         log.info(f'[recover] InvokePattern clicked "{label}"')
-                        # Quick check: did the click have any effect?
                         time.sleep(3)
                         try:
                             hwnd2 = find_wechat_window()
@@ -173,20 +175,36 @@ def try_auto_recover():
                                 return True
                         except Exception:
                             pass
-                        log.info(f'[recover] InvokePattern had no visible effect, trying coordinate click...')
+                        log.info(f'[recover] InvokePattern no effect, trying coordinate click...')
                 except Exception:
                     pass
-                
-                # Step B: fallback — coordinate click + Enter key combo
-                br = e.CurrentBoundingRectangle
-                cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
+
+                # Step B: coordinate click (needs active desktop, VNC must be connected)
                 log.info(f'[recover] Coordinate click "{label}" at ({cx},{cy})')
                 click_at(cx, cy)
                 time.sleep(1)
-                # Also send Enter as backup
                 ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0)
                 time.sleep(0.1)
                 ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
+
+                # Step C: PostMessage mouse click (NEVER fails, 100% session-independent)
+                time.sleep(2)
+                log.info(f'[recover] PostMessage click "{label}" at client ({cx},{cy})')
+                try:
+                    # Get window position for screen→client coordinate conversion
+                    wnd_rect = win32gui.GetWindowRect(hwnd)
+                    client_x = cx - wnd_rect[0]
+                    client_y = cy - wnd_rect[1]
+                    lparam = (client_y << 16) | (client_x & 0xFFFF)
+                    # Send mouse click directly to the WeChat window
+                    ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
+                    time.sleep(0.02)
+                    ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
+                    time.sleep(0.05)
+                    ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_LBUTTONUP, 0, lparam)
+                    log.info(f'[recover] PostMessage mouse click sent to HWND={hwnd}')
+                except Exception as ex:
+                    log.error(f'[recover] PostMessage failed: {ex}')
                 return True
 
             # Check for popup with "我知道了"
