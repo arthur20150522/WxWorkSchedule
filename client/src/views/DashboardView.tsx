@@ -22,14 +22,15 @@ const statCard = (value: number, label: string, color: string) => (
 const TaskBoard: React.FC<{ stats: TaskStats }> = ({ stats }) => {
     const items: { value: number; label: string; color: string }[] = [
         { value: stats.total,   label: t.taskTotal,   color: 'bg-slate-100 text-slate-700' },
-        { value: stats.once,    label: t.taskOnce,    color: 'bg-amber-50 text-amber-700' },
-        { value: stats.daily,   label: t.taskDaily,   color: 'bg-blue-50 text-blue-700' },
-        { value: stats.weekly,  label: t.taskWeekly,  color: 'bg-green-50 text-green-700' },
-        { value: stats.monthly, label: t.taskMonthly, color: 'bg-purple-50 text-purple-700' },
-        { value: stats.interval,label: t.taskInterval,color: 'bg-cyan-50 text-cyan-700' },
         { value: stats.pending, label: t.taskPending, color: 'bg-indigo-50 text-indigo-700' },
+        { value: stats.todayPending, label: t.taskTodayPending, color: stats.todayPending > 0 ? 'bg-green-50 text-green-700' : 'bg-gray-50 text-gray-500' },
         { value: stats.overduePending, label: t.taskOverdue, color: stats.overduePending > 0 ? 'bg-orange-50 text-orange-700' : 'bg-gray-50 text-gray-500' },
         { value: stats.failed,  label: t.taskFailed,  color: stats.failed > 0 ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-500' },
+        { value: stats.once,    label: t.taskOnce,    color: 'bg-amber-50 text-amber-700' },
+        { value: stats.daily,   label: t.taskDaily,   color: 'bg-blue-50 text-blue-700' },
+        { value: stats.weekly,  label: t.taskWeekly,  color: 'bg-sky-50 text-sky-700' },
+        { value: stats.monthly, label: t.taskMonthly, color: 'bg-purple-50 text-purple-700' },
+        { value: stats.interval,label: t.taskInterval,color: 'bg-cyan-50 text-cyan-700' },
     ];
 
     return (

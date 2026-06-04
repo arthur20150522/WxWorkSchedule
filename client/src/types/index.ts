@@ -25,6 +25,7 @@ export interface TaskStats {
   pending: number;
   failed: number;
   overduePending: number;
+  todayPending: number;  // pending tasks scheduled for today
 }
 
 export interface BotStatus {

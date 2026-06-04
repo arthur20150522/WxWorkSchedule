@@ -115,6 +115,7 @@ export const t = {
     taskMonthly: "每月",
     taskInterval: "间隔",
     taskPending: "待执行",
+    taskTodayPending: "今日待发",
     taskOverdue: "已过期",
     taskFailed: "失败",
     // 实时发送
