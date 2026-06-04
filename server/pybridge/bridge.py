@@ -132,7 +132,8 @@ def try_auto_recover():
             wx = get_wx()
             if wx.is_connected:
                 hwnd_quick = wx._window.hwnd if hasattr(wx, '_window') else 0
-                if hwnd_quick and _is_main_window(hwnd_quick):
+                # Verify hwnd is still alive (not a zombie from killed WeChat)
+                if hwnd_quick and win32gui.IsWindow(hwnd_quick) and _is_main_window(hwnd_quick):
                     return  # healthy — skip recovery
         except Exception:
             pass
