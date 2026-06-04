@@ -3,6 +3,7 @@ import { app } from './api.js';
 import { initDB, getDb, addLog } from './dbManager.js';
 import { BotManager } from './botManager.js';
 import { startScheduler } from './scheduler.js';
+import { wxBridge } from './wxBridge.js';
 import express from 'express';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -103,9 +104,41 @@ const main = async () => {
   // 5. Start scheduler
   startScheduler();
 
-  // 6. Daily auto-recover failed recurring tasks at 06:00
+  // 6. Daily auto-recover — reset pushed tasks at 06:30
   startAutoRecover();
   console.log('[AutoRecover] Enabled — runs daily at 06:30');
+
+  // 6b. WeChat auto-restart schedule — kill/launch at configured times
+  let wechatLastKillDate = '';
+  let wechatLastLaunchDate = '';
+  setInterval(async () => {
+    try {
+      const db = await getDb();
+      const schedule = db.data.wechatSchedule;
+      if (!schedule || !schedule.enabled) return;
+
+      const now = new Date();
+      const dateStr = now.toISOString().slice(0, 10);
+      const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+      if (hhmm === schedule.killTime && dateStr !== wechatLastKillDate) {
+        wechatLastKillDate = dateStr;
+        const result = await wxBridge.fetchBridge<{success:boolean;message?:string}>('/wechat-kill', 'POST');
+        console.log(`[WeChatSched] Kill at ${hhmm}: ${result.message || 'ok'}`);
+        await addLog('warn', `WeChat 定时关闭: ${result.message || 'ok'}`);
+      }
+
+      if (hhmm === schedule.launchTime && dateStr !== wechatLastLaunchDate) {
+        wechatLastLaunchDate = dateStr;
+        const result = await wxBridge.fetchBridge<{success:boolean;message?:string}>('/wechat-launch', 'POST');
+        console.log(`[WeChatSched] Launch at ${hhmm}: ${result.message || 'ok'}`);
+        await addLog('info', `WeChat 定时拉起: ${result.message || 'ok'}`);
+      }
+    } catch (e) {
+      // silently ignore — schedule check should not crash the server
+    }
+  }, 60000);
+  console.log('[WeChatSched] Checker started — every 60s');
 
   // 7. Health monitor — push notification when WeChat goes offline
   BotManager.startHealthMonitor();

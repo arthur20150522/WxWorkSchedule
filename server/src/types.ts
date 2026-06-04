@@ -71,12 +71,19 @@ export interface LiveLog {
 }
 
 // ── Database Schema ─────────────────────────────────────
+export interface WeChatSchedule {
+  enabled: boolean;
+  killTime: string;   // "HH:mm"
+  launchTime: string;  // "HH:mm"
+}
+
 export interface Data {
   contacts: Contact[];
   tasks: Task[];
   templates: Template[];
   logs: Log[];
   liveLogs: LiveLog[];
+  wechatSchedule?: WeChatSchedule;
 }
 
 // ── Bot Status (API 返回) ────────────────────────────────

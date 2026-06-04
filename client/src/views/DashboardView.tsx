@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { RefreshCw, CheckCircle, XCircle, Loader2, AlertTriangle, BarChart3, ShieldOff, LogIn, Zap } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { RefreshCw, CheckCircle, XCircle, Loader2, AlertTriangle, BarChart3, ShieldOff, LogIn, Zap, Power, PowerOff, Clock } from 'lucide-react';
 import clsx from 'clsx';
 import { t } from '../utils/i18n';
 import { BotStatus, TaskStats } from '../types';
@@ -45,7 +45,69 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
     const [canceling, setCanceling] = useState(false);
     const [isRecovering, setIsRecovering] = useState(false);
+    const [killing, setKilling] = useState(false);
+    const [launching, setLaunching] = useState(false);
+    const [wechatProc, setWechatProc] = useState<{running: boolean; pidCount: number}>({running: false, pidCount: 0});
+    const [wechatSched, setWechatSched] = useState({enabled: false, killTime: '03:00', launchTime: '06:00'});
+    const [schedSaving, setSchedSaving] = useState(false);
     const hasQueue = botStatus.queueLength > 0;
+
+    // Fetch WeChat process status
+    const fetchWechatStatus = async () => {
+        try {
+            const res = await axios.get('/api/wechat/status');
+            setWechatProc({running: res.data.running, pidCount: res.data.pidCount});
+        } catch { /* ignore */ }
+    };
+
+    // Fetch WeChat schedule
+    const fetchWechatSchedule = async () => {
+        try {
+            const res = await axios.get('/api/wechat/schedule');
+            setWechatSched(res.data);
+        } catch { /* ignore */ }
+    };
+
+    useEffect(() => {
+        fetchWechatStatus();
+        fetchWechatSchedule();
+        const iv = setInterval(fetchWechatStatus, 30000);
+        return () => clearInterval(iv);
+    }, []);
+
+    const handleKillWeChat = async () => {
+        if (!confirm('确定要关闭微信进程吗？\n\n所有WeChatAppEx.exe进程将被终止。')) return;
+        setKilling(true);
+        try {
+            const res = await axios.post('/api/wechat/kill');
+            showToast(res.data.message || '微信已关闭', 'success');
+            fetchWechatStatus();
+        } catch (e: any) {
+            showToast('关闭失败: ' + (e.response?.data?.error || e.message), 'error');
+        } finally { setKilling(false); }
+    };
+
+    const handleLaunchWeChat = async () => {
+        setLaunching(true);
+        try {
+            const res = await axios.post('/api/wechat/launch');
+            showToast(res.data.message || '微信已拉起', 'success');
+            fetchWechatStatus();
+        } catch (e: any) {
+            showToast('拉起失败: ' + (e.response?.data?.error || e.message), 'error');
+        } finally { setLaunching(false); }
+    };
+
+    const handleSaveSchedule = async () => {
+        setSchedSaving(true);
+        try {
+            await axios.put('/api/wechat/schedule', wechatSched);
+            showToast('定时任务已保存', 'success');
+            fetchWechatSchedule();
+        } catch (e: any) {
+            showToast('保存失败: ' + (e.response?.data?.error || e.message), 'error');
+        } finally { setSchedSaving(false); }
+    };
 
     const handleAutoLogin = async () => {
         setIsRecovering(true);
@@ -76,6 +138,110 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return (
         <div className="max-w-2xl mx-auto space-y-6">
             <h1 className="text-2xl font-bold text-gray-800">{t.botStatus}</h1>
+
+            {/* WeChat 进程管理 */}
+            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                        <Power className="w-4 h-4" />
+                        微信进程
+                    </h2>
+                    <div className="flex items-center gap-2">
+                        <span className={clsx(
+                            "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium",
+                            wechatProc.running ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+                        )}>
+                            <span className={clsx("w-2 h-2 rounded-full", wechatProc.running ? "bg-green-500" : "bg-gray-400")} />
+                            {wechatProc.running ? `运行中 (${wechatProc.pidCount}进程)` : '未运行'}
+                        </span>
+                        <button
+                            onClick={fetchWechatStatus}
+                            className="p-1.5 rounded-md hover:bg-gray-100 text-gray-400"
+                            title="刷新状态"
+                        >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                </div>
+                <div className="flex gap-3">
+                    <button
+                        onClick={handleLaunchWeChat}
+                        disabled={launching || wechatProc.running}
+                        className="flex-1 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-1.5"
+                    >
+                        {launching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
+                        {launching ? '拉起中...' : '打开微信'}
+                    </button>
+                    <button
+                        onClick={handleKillWeChat}
+                        disabled={killing || !wechatProc.running}
+                        className="flex-1 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-1.5"
+                    >
+                        {killing ? <Loader2 className="w-4 h-4 animate-spin" /> : <PowerOff className="w-4 h-4" />}
+                        {killing ? '关闭中...' : '关闭微信'}
+                    </button>
+                </div>
+
+                {/* 定时重启 */}
+                <div className="mt-4 pt-4 border-t border-gray-100">
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-xs font-bold text-gray-600 flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5" />
+                            定时重启微信
+                        </h3>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <span className="text-xs text-gray-400">{wechatSched.enabled ? '已启用' : '已禁用'}</span>
+                            <button
+                                onClick={() => setWechatSched({...wechatSched, enabled: !wechatSched.enabled})}
+                                className={clsx(
+                                    "relative w-9 h-5 rounded-full transition-colors",
+                                    wechatSched.enabled ? "bg-green-500" : "bg-gray-300"
+                                )}
+                            >
+                                <span className={clsx(
+                                    "absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform",
+                                    wechatSched.enabled ? "translate-x-4" : "translate-x-0.5"
+                                )} />
+                            </button>
+                        </label>
+                    </div>
+                    {wechatSched.enabled && (
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-500 w-14">关闭时间</span>
+                                <input
+                                    type="time"
+                                    value={wechatSched.killTime}
+                                    onChange={e => setWechatSched({...wechatSched, killTime: e.target.value})}
+                                    className="flex-1 px-3 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-1 focus:ring-red-300"
+                                />
+                                <span className="text-xs text-gray-400">杀掉微信进程</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-500 w-14">打开时间</span>
+                                <input
+                                    type="time"
+                                    value={wechatSched.launchTime}
+                                    onChange={e => setWechatSched({...wechatSched, launchTime: e.target.value})}
+                                    className="flex-1 px-3 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-1 focus:ring-green-300"
+                                />
+                                <span className="text-xs text-gray-400">拉起微信进程</span>
+                            </div>
+                            <button
+                                onClick={handleSaveSchedule}
+                                disabled={schedSaving}
+                                className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-1.5 mt-1"
+                            >
+                                {schedSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                                {schedSaving ? '保存中...' : '保存定时'}
+                            </button>
+                            <p className="text-xs text-gray-400 text-center mt-1">
+                                每天 {wechatSched.killTime} 关闭，{wechatSched.launchTime} 拉起，绕过微信夜间踢号
+                            </p>
+                        </div>
+                    )}
+                </div>
+            </div>
 
             {/* Bot 连接状态 */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">

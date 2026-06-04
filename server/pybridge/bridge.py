@@ -260,6 +260,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_recover()
             elif path == '/dump-uia':
                 self._handle_dump_uia()
+            elif path == '/wechat-status':
+                self._handle_wechat_status()
             elif path.startswith('/task/'):
                 self._handle_task_status(path)
             else:
@@ -276,6 +278,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_send(body)
             elif path == '/batch-send':
                 self._handle_batch_send(body)
+            elif path == '/wechat-kill':
+                self._handle_wechat_kill()
+            elif path == '/wechat-launch':
+                self._handle_wechat_launch()
             else:
                 self._send({'error': 'not found'}, 404)
         except Exception as e:
@@ -487,6 +493,88 @@ class BridgeHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send({'error': str(e)})
+
+    def _check_wechat_process(self):
+        """Check if WeChatAppEx.exe is running. Returns (running, pids)."""
+        import subprocess
+        try:
+            out = subprocess.check_output(
+                'tasklist /FO CSV /FI "IMAGENAME eq WeChatAppEx.exe"',
+                shell=True, encoding='gbk', errors='ignore'
+            )
+            pids = []
+            for line in out.strip().split('\n')[1:]:
+                parts = line.replace('"','').split(',')
+                if len(parts) >= 2 and parts[0].strip() == 'WeChatAppEx.exe':
+                    try:
+                        pids.append(int(parts[1].strip()))
+                    except ValueError:
+                        pass
+            return len(pids) > 0, pids
+        except Exception:
+            return False, []
+
+    def _handle_wechat_status(self):
+        """GET /wechat-status — check if WeChat process is running."""
+        try:
+            running, pids = self._check_wechat_process()
+            self._send({'running': running, 'pidCount': len(pids), 'pids': pids})
+        except Exception as e:
+            self._send({'error': str(e)})
+
+    def _handle_wechat_kill(self):
+        """POST /wechat-kill — kill all WeChatAppEx processes."""
+        import subprocess
+        try:
+            running, _ = self._check_wechat_process()
+            if not running:
+                self._send({'success': True, 'killed': 0, 'message': '微信进程未运行'})
+                return
+            subprocess.run(['taskkill', '/F', '/IM', 'WeChatAppEx.exe'],
+                          capture_output=True, encoding='gbk', errors='ignore')
+            log.info('[wechat-ctrl] Killed WeChatAppEx.exe')
+            self._send({'success': True, 'killed': len(_[1]) if _[0] else 0, 'message': '微信进程已关闭'})
+        except Exception as e:
+            self._send({'success': False, 'error': str(e)})
+
+    def _handle_wechat_launch(self):
+        """POST /wechat-launch — launch WeChat."""
+        import subprocess, os, winreg
+        try:
+            running, _ = self._check_wechat_process()
+            if running:
+                self._send({'success': True, 'launched': False, 'message': '微信已在运行'})
+                return
+            
+            # Try multiple known paths
+            paths = [
+                r'C:\Program Files\Tencent\WeChat\WeChatAppEx.exe',
+                r'C:\Program Files (x86)\Tencent\WeChat\WeChatAppEx.exe',
+            ]
+            
+            # Also try registry
+            try:
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                    r'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\WeChat')
+                path = winreg.QueryValueEx(key, 'DisplayIcon')[0]
+                if path and os.path.exists(path):
+                    paths.insert(0, path.replace(',0', ''))
+            except Exception:
+                pass
+
+            for p in paths:
+                if os.path.exists(p):
+                    subprocess.Popen([p], shell=True)
+                    log.info(f'[wechat-ctrl] Launched WeChat: {p}')
+                    self._send({'success': True, 'launched': True, 'path': p})
+                    return
+            
+            # Last resort: try shell:appsFolder
+            subprocess.Popen('start WeChatAppEx', shell=True)
+            log.info('[wechat-ctrl] Launched WeChat via start command')
+            self._send({'success': True, 'launched': True, 'path': 'start command fallback'})
+        except Exception as e:
+            self._send({'success': False, 'error': str(e)})
 
     def _handle_task_status(self, path):
         """GET /task/<id> — poll async task result."""

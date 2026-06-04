@@ -12,6 +12,7 @@ const defaultData = {
     templates: [],
     logs: [],
     liveLogs: [],
+    wechatSchedule: { enabled: false, killTime: '03:00', launchTime: '06:00' },
 };
 let dbInstance = null;
 export async function initDB() {

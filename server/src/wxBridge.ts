@@ -114,4 +114,9 @@ export const wxBridge = {
   async recover(): Promise<{ ok: boolean; message?: string; error?: string }> {
     return fetchBridge('/recover');
   },
+
+  /** Low-level bridge fetch with generic typing */
+  async fetchBridge<T = any>(path: string, method: 'GET' | 'POST' = 'GET', body?: any): Promise<T> {
+    return fetchBridge(path, method === 'POST' ? { method: 'POST', body: JSON.stringify(body || {}) } : {});
+  },
 };

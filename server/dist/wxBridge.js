@@ -81,4 +81,8 @@ export const wxBridge = {
     async recover() {
         return fetchBridge('/recover');
     },
+    /** Low-level bridge fetch with generic typing */
+    async fetchBridge(path, method = 'GET', body) {
+        return fetchBridge(path, method === 'POST' ? { method: 'POST', body: JSON.stringify(body || {}) } : {});
+    },
 };

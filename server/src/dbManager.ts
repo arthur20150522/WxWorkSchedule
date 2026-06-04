@@ -18,6 +18,7 @@ const defaultData: Data = {
   templates: [],
   logs: [],
   liveLogs: [],
+  wechatSchedule: { enabled: false, killTime: '03:00', launchTime: '06:00' },
 };
 
 let dbInstance: Low<Data> | null = null;

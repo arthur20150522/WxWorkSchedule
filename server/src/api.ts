@@ -145,6 +145,61 @@ apiRouter.post('/bridge/recover', async (_req, res) => {
   }
 });
 
+// ── WeChat Process Management ────────────────────────────
+apiRouter.get('/wechat/status', async (_req, res) => {
+  try {
+    const result = await wxBridge.fetchBridge<{running: boolean; pidCount: number; pids: number[]}>('/wechat-status');
+    res.json(result);
+  } catch (e) {
+    res.json({ running: false, pidCount: 0, pids: [], error: (e as Error).message });
+  }
+});
+
+apiRouter.post('/wechat/kill', async (_req, res) => {
+  try {
+    const result = await wxBridge.fetchBridge<{success: boolean; killed?: number; message?: string; error?: string}>('/wechat-kill', 'POST');
+    await addLog('warn', `WeChat kill: ${result.message || result.error || 'ok'}`);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ success: false, error: (e as Error).message });
+  }
+});
+
+apiRouter.post('/wechat/launch', async (_req, res) => {
+  try {
+    const result = await wxBridge.fetchBridge<{success: boolean; launched?: boolean; message?: string; error?: string}>('/wechat-launch', 'POST');
+    await addLog('info', `WeChat launch: ${result.message || result.error || 'ok'}`);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ success: false, error: (e as Error).message });
+  }
+});
+
+// WeChat auto-restart schedule
+apiRouter.get('/wechat/schedule', async (_req, res) => {
+  try {
+    const db = await getDb();
+    res.json(db.data.wechatSchedule || { enabled: false, killTime: '03:00', launchTime: '06:00' });
+  } catch (e) {
+    handleError(res, e);
+  }
+});
+
+apiRouter.put('/wechat/schedule', async (req, res) => {
+  try {
+    const { enabled, killTime, launchTime } = req.body;
+    const db = await getDb();
+    await db.update(({ wechatSchedule }) => {
+      wechatSchedule = { enabled: !!enabled, killTime: killTime || '03:00', launchTime: launchTime || '06:00' };
+      return { wechatSchedule };
+    });
+    await addLog('info', `WeChat schedule updated: enabled=${enabled}, kill=${killTime}, launch=${launchTime}`);
+    res.json({ success: true, schedule: db.data.wechatSchedule });
+  } catch (e) {
+    handleError(res, e);
+  }
+});
+
 // ── Contacts (通讯录 CRUD) ───────────────────────────────
 apiRouter.get('/contacts', async (_req, res) => {
   try {
