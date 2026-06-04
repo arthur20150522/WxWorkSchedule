@@ -57,7 +57,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const fetchWechatStatus = async () => {
         setProcLoading(true);
         try {
-            const res = await axios.get('/api/wechat/status');
+            const res = await axios.get('/api/wechat/status', { timeout: 8000 });
             setWechatProc({running: res.data.running, pidCount: res.data.pidCount});
         } catch {
             setWechatProc(null);

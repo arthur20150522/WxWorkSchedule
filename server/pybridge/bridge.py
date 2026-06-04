@@ -497,12 +497,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'error': str(e)})
 
     def _check_wechat_process(self):
-        """Check if WeChat is running. Uses WinAPI via window handle (most reliable)."""
+        """Check if WeChat is running. Fast path: WinAPI GetWindowThreadProcessId."""
+        import ctypes
         running = False
         pids = []
-        
-        # Primary: get PID from WeChat window handle (works across exe name changes)
-        import ctypes
         try:
             from wx4py.core.win32 import find_wechat_window
             hwnd = find_wechat_window()
@@ -512,37 +510,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if pid.value:
                     running = True
                     pids.append(pid.value)
-                    # Try to get child PIDs via psutil
-                    try:
-                        import psutil
-                        proc = psutil.Process(pid.value)
-                        for child in proc.children(recursive=True):
-                            pids.append(child.pid)
-                    except Exception:
-                        pass
         except Exception:
             pass
-        
-        # Fallback: check known exe names
-        if not running:
-            import subprocess
-            try:
-                for exe in ['WeChatAppEx.exe', 'Weixin.exe', 'WeChat.exe']:
-                    out = subprocess.check_output(
-                        f'tasklist /FO CSV /FI "IMAGENAME eq {exe}"',
-                        shell=True, encoding='gbk', errors='ignore'
-                    )
-                    for line in out.strip().split('\n')[1:]:
-                        parts = line.replace('"','').split(',')
-                        if len(parts) >= 2 and parts[0].strip() == exe:
-                            try:
-                                pids.append(int(parts[1].strip()))
-                                running = True
-                            except ValueError:
-                                pass
-            except Exception:
-                pass
-        
         return running, pids
 
     def _handle_wechat_status(self):
