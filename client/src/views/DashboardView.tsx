@@ -47,17 +47,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const [isRecovering, setIsRecovering] = useState(false);
     const [killing, setKilling] = useState(false);
     const [launching, setLaunching] = useState(false);
-    const [wechatProc, setWechatProc] = useState<{running: boolean; pidCount: number}>({running: false, pidCount: 0});
-    const [wechatSched, setWechatSched] = useState({enabled: false, killTime: '03:00', launchTime: '06:00'});
+    const [wechatProc, setWechatProc] = useState<{running: boolean; pidCount: number} | null>(null);
+    const [wechatSched, setWechatSched] = useState<any>(null);
     const [schedSaving, setSchedSaving] = useState(false);
+    const [procLoading, setProcLoading] = useState(true);
     const hasQueue = botStatus.queueLength > 0;
 
     // Fetch WeChat process status
     const fetchWechatStatus = async () => {
+        setProcLoading(true);
         try {
             const res = await axios.get('/api/wechat/status');
             setWechatProc({running: res.data.running, pidCount: res.data.pidCount});
-        } catch { /* ignore */ }
+        } catch {
+            setWechatProc(null);
+        } finally {
+            setProcLoading(false);
+        }
     };
 
     // Fetch WeChat schedule
@@ -65,7 +71,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         try {
             const res = await axios.get('/api/wechat/schedule');
             setWechatSched(res.data);
-        } catch { /* ignore */ }
+        } catch {
+            setWechatSched(null);
+        }
     };
 
     useEffect(() => {
@@ -147,13 +155,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         微信进程
                     </h2>
                     <div className="flex items-center gap-2">
-                        <span className={clsx(
-                            "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium",
-                            wechatProc.running ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
-                        )}>
-                            <span className={clsx("w-2 h-2 rounded-full", wechatProc.running ? "bg-green-500" : "bg-gray-400")} />
-                            {wechatProc.running ? `运行中 (${wechatProc.pidCount}进程)` : '未运行'}
-                        </span>
+                        {procLoading || !wechatProc ? (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-400">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                加载中...
+                            </span>
+                        ) : (
+                            <span className={clsx(
+                                "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium",
+                                wechatProc.running ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+                            )}>
+                                <span className={clsx("w-2 h-2 rounded-full", wechatProc.running ? "bg-green-500" : "bg-gray-400")} />
+                                {wechatProc.running ? `运行中 (${wechatProc.pidCount}进程)` : '未运行'}
+                            </span>
+                        )}
                         <button
                             onClick={fetchWechatStatus}
                             className="p-1.5 rounded-md hover:bg-gray-100 text-gray-400"
@@ -166,7 +181,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <div className="flex gap-3">
                     <button
                         onClick={handleLaunchWeChat}
-                        disabled={launching || wechatProc.running}
+                        disabled={launching || !wechatProc || wechatProc.running}
                         className="flex-1 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-1.5"
                     >
                         {launching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
@@ -174,7 +189,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </button>
                     <button
                         onClick={handleKillWeChat}
-                        disabled={killing || !wechatProc.running}
+                        disabled={killing || !wechatProc || !wechatProc.running}
                         className="flex-1 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-1.5"
                     >
                         {killing ? <Loader2 className="w-4 h-4 animate-spin" /> : <PowerOff className="w-4 h-4" />}
@@ -190,22 +205,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             定时重启微信
                         </h3>
                         <label className="flex items-center gap-2 cursor-pointer">
-                            <span className="text-xs text-gray-400">{wechatSched.enabled ? '已启用' : '已禁用'}</span>
+                            <span className="text-xs text-gray-400">{wechatSched && wechatSched.enabled ? '已启用' : '已禁用'}</span>
                             <button
-                                onClick={() => setWechatSched({...wechatSched, enabled: !wechatSched.enabled})}
+                                onClick={() => wechatSched && setWechatSched({...wechatSched, enabled: !wechatSched.enabled})}
+                                disabled={!wechatSched}
                                 className={clsx(
                                     "relative w-9 h-5 rounded-full transition-colors",
-                                    wechatSched.enabled ? "bg-green-500" : "bg-gray-300"
+                                    !wechatSched ? "bg-gray-200" : wechatSched.enabled ? "bg-green-500" : "bg-gray-300"
                                 )}
                             >
                                 <span className={clsx(
                                     "absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform",
-                                    wechatSched.enabled ? "translate-x-4" : "translate-x-0.5"
+                                    wechatSched && wechatSched.enabled ? "translate-x-4" : "translate-x-0.5"
                                 )} />
                             </button>
                         </label>
                     </div>
-                    {wechatSched.enabled && (
+                    {wechatSched && wechatSched.enabled && (
                         <div className="space-y-2">
                             <div className="flex items-center gap-2">
                                 <span className="text-xs text-gray-500 w-14">关闭时间</span>
