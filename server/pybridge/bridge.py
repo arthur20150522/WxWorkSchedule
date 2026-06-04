@@ -518,8 +518,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'ok': False, 'reason': f'健康检查异常: {e}', 'stage': 'fatal'})
 
     def _handle_recover(self):
-        """Manual trigger: run auto-recovery now."""
+        """Manual trigger: run auto-recovery now (bypasses cooldown)."""
         try:
+            global LAST_RECOVER_ACTION
+            LAST_RECOVER_ACTION = 0  # reset cooldown for manual trigger
             threading.Thread(target=try_auto_recover, daemon=True).start()
             self._send({'ok': True, 'message': '恢复已触发'})
         except Exception as e:
