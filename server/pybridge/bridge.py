@@ -523,25 +523,55 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'error': str(e)})
 
     def _handle_wechat_kill(self):
-        """POST /wechat-kill — kill all WeChatAppEx processes, double-tap to prevent auto-restart."""
+        """POST /wechat-kill — kill all WeChatAppEx processes recursively with psutil."""
         import subprocess, time
         try:
             running, pids = self._check_wechat_process()
             if not running:
                 self._send({'success': True, 'killed': 0, 'message': '微信进程未运行'})
                 return
-            killed = len(pids)
-            subprocess.run(['taskkill', '/F', '/IM', 'WeChatAppEx.exe'],
-                          capture_output=True, encoding='gbk', errors='ignore')
-            time.sleep(1)
-            # Double-tap: WeChat auto-restarts, kill any that came back
-            _, pids2 = self._check_wechat_process()
-            if pids2:
+            
+            # Use psutil for recursive process tree kill
+            killed = 0
+            try:
+                import psutil
+                for pid in pids:
+                    try:
+                        proc = psutil.Process(pid)
+                        children = proc.children(recursive=True)
+                        for child in children:
+                            try:
+                                child.kill()
+                                killed += 1
+                            except Exception:
+                                pass
+                        proc.kill()
+                        killed += 1
+                    except psutil.NoSuchProcess:
+                        killed += 1  # already dead
+                    except Exception:
+                        pass
+            except ImportError:
+                # Fallback to taskkill
                 subprocess.run(['taskkill', '/F', '/IM', 'WeChatAppEx.exe'],
                               capture_output=True, encoding='gbk', errors='ignore')
-                killed += len(pids2)
-            log.info(f'[wechat-ctrl] Killed WeChatAppEx.exe ({killed} total)')
-            self._send({'success': True, 'killed': killed, 'message': f'微信进程已关闭（共终止 {killed} 个）'})
+                killed = len(pids)
+
+            # Rapid follow-up to catch restarts
+            time.sleep(0.5)
+            _, pids2 = self._check_wechat_process()
+            if pids2:
+                for pid in pids2:
+                    try:
+                        import psutil
+                        psutil.Process(pid).kill()
+                        killed += 1
+                    except Exception:
+                        subprocess.run(['taskkill', '/F', '/PID', str(pid)],
+                                      capture_output=True, encoding='gbk', errors='ignore')
+
+            log.info(f'[wechat-ctrl] Killed WeChatAppEx.exe ({killed} processes)')
+            self._send({'success': True, 'killed': killed, 'message': f'微信进程已关闭（{killed}个进程）'})
         except Exception as e:
             self._send({'success': False, 'error': str(e)})
 
