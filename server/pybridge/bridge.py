@@ -1044,9 +1044,27 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'success': False, 'error': 'target and message required'}, 400)
             return
 
-        # Ensure WeChat window is visible (tray -> restore) before send
+        # Ensure WeChat window is visible + wx4py connection is healthy
         def _do_send():
             import win32gui, win32con, time as t
+            wx = get_wx()
+            # Pre-check: verify wx4py can actually search (connection is real, not stale)
+            if not wx.is_connected:
+                log.info(f'[send] wx4py not connected, attempting reconnect...')
+                try: wx.disconnect()
+                except: pass
+                global _wx; _wx = None
+                wx = get_wx()
+            # Quick health test: can we find the target?
+            try:
+                results = wx.contact_list.search(target, target_type=target_type, limit=1)
+                if not results:
+                    log.error(f'[send] target not found: [{target_type}] {target}')
+                    return False
+            except Exception as e:
+                log.error(f'[send] search health check failed: {e}')
+                return False
+            # Restore window if needed
             try:
                 hwnd = self._get_wechat_hwnd()
                 if hwnd and not win32gui.IsWindowVisible(hwnd):
@@ -1055,7 +1073,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     t.sleep(1)
             except Exception as e:
                 log.debug(f'[send] window restore error: {e}')
-            wx = get_wx()
             ok = wx.chat_window.send_to(target, message, target_type=target_type)
             log.info(f'[send] to [{target_type}] {target}: {"OK" if ok else "FAIL"}')
             return ok
