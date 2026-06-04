@@ -1048,22 +1048,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
         def _do_send():
             import win32gui, win32con, time as t
             wx = get_wx()
-            # Pre-check: verify wx4py can actually search (connection is real, not stale)
+            # Pre-check: reconnect wx4py if stale
             if not wx.is_connected:
                 log.info(f'[send] wx4py not connected, attempting reconnect...')
                 try: wx.disconnect()
                 except: pass
                 global _wx; _wx = None
                 wx = get_wx()
-            # Quick health test: can we find the target?
-            try:
-                results = wx.contact_list.search(target, target_type=target_type, limit=1)
-                if not results:
-                    log.error(f'[send] target not found: [{target_type}] {target}')
+                if not wx.is_connected:
+                    log.error('[send] wx4py still not connected after reconnect')
                     return False
-            except Exception as e:
-                log.error(f'[send] search health check failed: {e}')
-                return False
             # Restore window if needed
             try:
                 hwnd = self._get_wechat_hwnd()
