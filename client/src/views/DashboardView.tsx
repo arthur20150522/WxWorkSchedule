@@ -206,11 +206,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </h3>
                         <label className="flex items-center gap-2 cursor-pointer">
                             <span className="text-xs text-gray-400">{wechatSched && wechatSched.enabled ? '已启用' : '已禁用'}</span>
-                            <button
+                            <div
                                 onClick={() => wechatSched && setWechatSched({...wechatSched, enabled: !wechatSched.enabled})}
-                                disabled={!wechatSched}
                                 className={clsx(
-                                    "relative w-9 h-5 rounded-full transition-colors",
+                                    "relative w-9 h-5 rounded-full transition-colors flex-shrink-0",
                                     !wechatSched ? "bg-gray-200" : wechatSched.enabled ? "bg-green-500" : "bg-gray-300"
                                 )}
                             >
@@ -218,7 +217,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                     "absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform",
                                     wechatSched && wechatSched.enabled ? "translate-x-4" : "translate-x-0.5"
                                 )} />
-                            </button>
+                            </div>
                         </label>
                     </div>
                     {wechatSched && wechatSched.enabled && (
