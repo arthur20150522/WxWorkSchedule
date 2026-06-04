@@ -264,6 +264,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_wechat_status()
             elif path == '/wechat-diag':
                 self._handle_wechat_diag()
+            elif path == '/find-wechat':
+                self._handle_find_wechat()
             elif path.startswith('/task/'):
                 self._handle_task_status(path)
             else:
@@ -741,6 +743,64 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send({'success': False, 'error': '找不到微信程序路径'})
         except Exception as e:
             self._send({'success': False, 'error': str(e)})
+
+    def _handle_find_wechat(self):
+        """GET /find-wechat — debug: report all path search attempts."""
+        import os, winreg, glob, subprocess
+        result = {'steps': []}
+
+        # Step 1: psutil (running process)
+        try:
+            import psutil
+            procs = [(p.pid, p.name(), p.exe()) for p in psutil.process_iter(['name','exe'])
+                     if (p.info['name'] or '').lower() in ('weixin.exe','wechatappex.exe','wechat.exe')]
+            result['steps'].append({'step': 'psutil', 'found': len(procs), 'procs': procs})
+        except Exception as e:
+            result['steps'].append({'step': 'psutil', 'error': str(e)})
+
+        # Step 2: WinAPI window PID exe
+        try:
+            from wx4py.core.win32 import find_wechat_window
+            hwnd = find_wechat_window()
+            if hwnd:
+                import ctypes
+                pid = ctypes.c_ulong()
+                ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                try:
+                    import psutil
+                    exe = psutil.Process(pid.value).exe()
+                    result['steps'].append({'step': 'WinAPI', 'hwnd': hwnd, 'pid': pid.value, 'exe': exe})
+                except Exception as e2:
+                    result['steps'].append({'step': 'WinAPI', 'hwnd': hwnd, 'pid': pid.value, 'error': str(e2)})
+            else:
+                result['steps'].append({'step': 'WinAPI', 'found': False, 'reason': 'no hwnd'})
+        except Exception as e:
+            result['steps'].append({'step': 'WinAPI', 'error': str(e)})
+
+        # Step 3: Common paths
+        found_paths = []
+        for base in [
+            r'C:\Program Files\Tencent\WeChat',
+            r'C:\Program Files (x86)\Tencent\WeChat',
+            os.path.expandvars(r'%LOCALAPPDATA%\Tencent\WeChat'),
+        ]:
+            for name in ['Weixin.exe', 'WeChatAppEx.exe', 'WeChat.exe']:
+                p = os.path.join(base, name)
+                if os.path.exists(p):
+                    found_paths.append(p)
+        result['steps'].append({'step': 'common_paths', 'found': found_paths})
+
+        # Step 4: where command
+        wheres = {}
+        for exe in ['Weixin', 'WeChat', 'WeChatAppEx']:
+            try:
+                out = subprocess.check_output(f'where {exe}', shell=True, encoding='gbk', errors='ignore')
+                wheres[exe] = out.strip()
+            except:
+                wheres[exe] = 'not found'
+        result['steps'].append({'step': 'where', 'results': wheres})
+
+        self._send(result)
 
     def _handle_task_status(self, path):
         """GET /task/<id> — poll async task result."""
