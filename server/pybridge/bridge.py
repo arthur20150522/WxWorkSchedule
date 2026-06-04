@@ -258,6 +258,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_deep_health()
             elif path == '/recover':
                 self._handle_recover()
+            elif path == '/dump-uia':
+                self._handle_dump_uia()
             elif path.startswith('/task/'):
                 self._handle_task_status(path)
             else:
@@ -439,6 +441,52 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'ok': True, 'message': '恢复已触发'})
         except Exception as e:
             self._send({'ok': False, 'error': str(e)})
+
+    def _handle_dump_uia(self):
+        """Dump all UIA element names for debugging login page."""
+        try:
+            import pythoncom; pythoncom.CoInitialize()
+            import comtypes.client as cc
+            import comtypes.gen.UIAutomationClient as UIA
+
+            hwnd = self._get_wechat_hwnd()
+            if not hwnd:
+                self._send({'error': '无微信窗口'})
+                return
+
+            uia_obj = cc.CreateObject('{ff48dba4-60ef-4201-aa87-54103eef594e}', interface=UIA.IUIAutomation)
+            elem = uia_obj.ElementFromHandle(hwnd)
+            all_e = elem.FindAll(UIA.TreeScope_Subtree, uia_obj.CreateTrueCondition())
+
+            elements = []
+            for i in range(all_e.Length):
+                e = all_e.GetElement(i)
+                n = (e.CurrentName or '').strip()
+                c = e.CurrentClassName or ''
+                ct = e.CurrentControlType if hasattr(e, 'CurrentControlType') else 0
+                try:
+                    br = e.CurrentBoundingRectangle
+                    rect = [br.left, br.top, br.right - br.left, br.bottom - br.top]
+                except:
+                    rect = None
+                try:
+                    pi = e.GetCurrentPattern(UIA.UIA_InvokePatternId)
+                    has_invoke = bool(pi)
+                except:
+                    has_invoke = False
+                if n or c:
+                    elements.append({
+                        'idx': i, 'name': n, 'class': c,
+                        'controlType': ct, 'hasInvoke': has_invoke, 'rect': rect
+                    })
+
+            self._send({
+                'hwnd': hwnd,
+                'total': all_e.Length,
+                'elements': elements
+            })
+        except Exception as e:
+            self._send({'error': str(e)})
 
     def _handle_task_status(self, path):
         """GET /task/<id> — poll async task result."""
