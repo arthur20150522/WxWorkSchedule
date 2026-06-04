@@ -56,10 +56,11 @@ def get_wx():
 
 # ── Auto-recovery: detect login page and click "进入微信" ─────────────
 AUTO_RECOVER_ENABLED = True
-AUTO_RECOVER_INTERVAL = 60  # check every 60s (faster response after launch)
+AUTO_RECOVER_INTERVAL = 300  # check every 5min (don't hammer the window)
 
 def try_auto_recover():
-    """Auto-recovery: bring WeChat to foreground, dismiss popups, click login, wait for main window."""
+    """Auto-recovery: reconnect wx4py if needed, then handle login page."""
+    global _wx
     try:
         import ctypes, win32gui, win32con, time
 
@@ -71,7 +72,32 @@ def try_auto_recover():
             ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
             time.sleep(0.15)
 
-        # ── Step 1: find WeChat window ──
+        # ── Step 0: reconnect wx4py if stale ──
+        try:
+            wx = get_wx()
+            if not wx.is_connected:
+                log.info('[recover] wx4py disconnected, attempting reconnect...')
+                try:
+                    wx.disconnect()
+                except Exception:
+                    pass
+                _wx = None
+                get_wx()  # will reconnect
+        except Exception:
+            pass
+
+        # ── Step 1: quick skip if wx4py already healthy ──
+        try:
+            wx = get_wx()
+            if wx.is_connected:
+                hwnd_quick = wx._window.hwnd if hasattr(wx, '_window') else 0
+                cls_quick = win32gui.GetClassName(hwnd_quick) if hwnd_quick else ''
+                if 'MainWindow' in cls_quick:
+                    # WeChat is healthy — no need to recover
+                    return
+        except Exception:
+            pass
+        # ── Step 2: find WeChat window ──
         hwnd = 0
         try:
             from wx4py.core.win32 import find_wechat_window
@@ -87,7 +113,7 @@ def try_auto_recover():
         class_name = win32gui.GetClassName(hwnd) or ''
         log.info(f'[recover] WeChat: HWND={hwnd} title={title[:30]!r} class={class_name}')
 
-        # ── Step 2: bring to foreground + let it fully render (20s) ──
+        # ── Step 3: bring to foreground + let it fully render (20s) ──
         from wx4py.core.win32 import is_window_visible
         if not is_window_visible(hwnd):
             log.info('[recover] WeChat not visible, restoring...')
@@ -96,7 +122,7 @@ def try_auto_recover():
         ctypes.windll.user32.SetForegroundWindow(hwnd)
         time.sleep(0.5)
 
-        # ── Step 3: UIA scan for popup / login ──
+        # ── Step 4: UIA scan for popup / login ──
         clicked_login = False
 
         try:
@@ -188,7 +214,7 @@ def try_auto_recover():
         except Exception as e:
             log.warning(f'[recover] UIA scan failed: {e}')
 
-        # ── Step 4: wait for main window after login click (up to 25s) ──
+        # ── Step 5: wait for main window after login click (up to 25s) ──
         if clicked_login:
             log.info('[recover] Waiting for WeChat main window after login click...')
             for i in range(50):  # 50 × 0.5s = 25s
@@ -200,7 +226,6 @@ def try_auto_recover():
                         if 'MainWindow' in cls:
                             log.info(f'[recover] Main window appeared: HWND={hwnd}')
                             # Reconnect wx4py client to new main window
-                            global _wx
                             if _wx is not None:
                                 try:
                                     _wx.disconnect()
@@ -220,7 +245,7 @@ def try_auto_recover():
                     log.debug(f'[recover] Still waiting for main window ({i * 0.5:.0f}s)...')
             log.warning('[recover] Timed out waiting for main window')
 
-        # ── Step 5: Win32 keyboard fallback (PostMessage — works without foreground) ──
+        # ── Step 6: Win32 keyboard fallback (PostMessage — works without foreground) ──
         if not clicked_login:
             log.info('[recover] UIA didn\'t click login, trying Win32 fallback...')
             # PostMessage sends keystrokes directly to the window, no foreground needed
