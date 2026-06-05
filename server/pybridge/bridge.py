@@ -1102,13 +1102,23 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not wx.is_connected:
                     log.error('[send] wx4py still not connected after reconnect')
                     return False
-            # Restore window if needed
+            # Restore window if needed — use IsIconic to avoid toggle trap
             try:
                 hwnd = self._get_wechat_hwnd()
-                if hwnd and not win32gui.IsWindowVisible(hwnd):
-                    log.info(f'[send] restoring window for {target}...')
-                    win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
-                    t.sleep(1)
+                if hwnd:
+                    is_iconic = win32gui.IsIconic(hwnd)
+                    is_visible = win32gui.IsWindowVisible(hwnd)
+                    if is_iconic:
+                        log.info(f'[send] restoring minimized window for {target}...')
+                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                        t.sleep(0.5)
+                    elif not is_visible:
+                        log.info(f'[send] showing hidden window for {target}...')
+                        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                        t.sleep(0.5)
+                    # Ensure window is in foreground before wx4py touches it
+                    win32gui.SetForegroundWindow(hwnd)
+                    t.sleep(0.3)
             except Exception as e:
                 log.debug(f'[send] window restore error: {e}')
             ok = wx.chat_window.send_to(target, message, target_type=target_type)
