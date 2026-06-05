@@ -230,6 +230,27 @@ def try_auto_recover():
                     log.error(f'[recover] PostMessage failed: {ex}')
                 return True
 
+            def _postmessage_click(hwnd_target, screen_cx, screen_cy):
+                """Send WM_LBUTTONDOWN/UP to window at screen coordinates. Session-independent."""
+                wnd_rect = win32gui.GetWindowRect(hwnd_target)
+                client_x = screen_cx - wnd_rect[0]
+                client_y = screen_cy - wnd_rect[1]
+                lparam = (client_y << 16) | (client_x & 0xFFFF)
+                ctypes.windll.user32.PostMessageW(hwnd_target, win32con.WM_MOUSEMOVE, 0, lparam)
+                time.sleep(0.02)
+                ctypes.windll.user32.PostMessageW(hwnd_target, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
+                time.sleep(0.05)
+                ctypes.windll.user32.PostMessageW(hwnd_target, win32con.WM_LBUTTONUP, 0, lparam)
+                return True
+
+            def _verify_main_window():
+                """Check if WeChat is now on main window (not login page)."""
+                try:
+                    hwnd_now = find_wechat_window()
+                    return hwnd_now and _is_main_window(hwnd_now)
+                except Exception:
+                    return False
+
             # Check for popup with "我知道了"
             for i in range(all_e.Length):
                 e = all_e.GetElement(i)
@@ -237,67 +258,139 @@ def try_auto_recover():
                 if n == '我知道了' and ('Button' in c or 'mmui' in c):
                     _uia_click(e, '我知道了')
                     time.sleep(2)
-                    # Re-scan after dismissing popup (window layout changes)
                     hwnd = find_wechat_window() or hwnd
                     elem = uia.ElementFromHandle(hwnd)
                     all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
                     break
 
-            # Check for "进入微信" / "登录" button
-            # Prefer XTextView (inner text) over XOutlineButton (outer frame)
-            found = False
+            # ── Find "进入微信" / "登录" element ──
+            login_elem = None
             for pref_class in ('mmui::XTextView', 'mmui::XOutlineButton', 'mmui::XButton'):
-                if found: break
+                if login_elem: break
                 for i in range(all_e.Length):
                     e = all_e.GetElement(i)
-                    n = e.CurrentName or ''
-                    c = e.CurrentClassName or ''
+                    n = e.CurrentName or ''; c = e.CurrentClassName or ''
                     if n in ('登录', '进入微信') and pref_class in c:
-                        _uia_click(e, n)
-                        clicked_login = True
-                        found = True
+                        login_elem = e
                         break
             # Fallback: any element with matching name
-            if not found:
+            if not login_elem:
                 for i in range(all_e.Length):
                     e = all_e.GetElement(i)
                     n = e.CurrentName or ''
                     if n in ('登录', '进入微信'):
-                        _uia_click(e, n)
+                        login_elem = e
+                        break
+
+            if not login_elem:
+                log.info('[recover] UIA didn\'t click login, trying Win32 fallback...')
+            else:
+                br = login_elem.CurrentBoundingRectangle
+                btn_cx = (br.left + br.right) // 2
+                btn_cy = (br.top + br.bottom) // 2
+                btn_w = br.right - br.left
+                btn_h = br.bottom - br.top
+
+                # ── Multi-retry click: 5 attempts with different positions ──
+                # Offsets: center → top-left → bottom-right → left-center → right-center
+                offsets = [
+                    (0, 0),                                    # center
+                    (-max(10, btn_w//4), -max(5, btn_h//4)),  # top-left
+                    (max(10, btn_w//4), max(5, btn_h//4)),    # bottom-right
+                    (-max(10, btn_w//4), 0),                   # left-center
+                    (max(10, btn_w//4), 0),                    # right-center
+                ]
+
+                for attempt, (ox, oy) in enumerate(offsets, 1):
+                    cx = btn_cx + ox
+                    cy = btn_cy + oy
+                    log.info(f'[recover] Login click attempt {attempt}/5 at ({cx},{cy})')
+                    
+                    # InvokePattern
+                    try:
+                        pattern = login_elem.GetCurrentPattern(UIA.UIA_InvokePatternId)
+                        if pattern:
+                            pattern.QueryInterface(UIA.IUIAutomationInvokePattern).Invoke()
+                            time.sleep(2)
+                            if _verify_main_window():
+                                log.info(f'[recover] InvokePattern worked on attempt {attempt}')
+                                clicked_login = True
+                                break
+                    except Exception:
+                        pass
+
+                    # Coordinate click
+                    click_at(cx, cy)
+                    time.sleep(0.5)
+                    ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0)
+                    time.sleep(0.1)
+                    ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
+                    time.sleep(1)
+
+                    if _verify_main_window():
+                        log.info(f'[recover] Coordinate click worked on attempt {attempt}')
                         clicked_login = True
                         break
+
+                    # PostMessage mouse click
+                    time.sleep(1)
+                    _postmessage_click(hwnd, cx, cy)
+                    log.info(f'[recover] PostMessage click sent at ({cx},{cy}) for HWND={hwnd}')
+                    time.sleep(2)
+
+                    if _verify_main_window():
+                        log.info(f'[recover] PostMessage click worked on attempt {attempt}')
+                        clicked_login = True
+                        break
+
+                    log.info(f'[recover] Attempt {attempt}/5 no effect, retrying...')
+
+                if not clicked_login:
+                    # Final fallback: PostMessage Enter + Space combo × 3
+                    log.info('[recover] All 5 clicks failed, trying Enter+Space combo...')
+                    for i in range(3):
+                        ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
+                        time.sleep(0.1)
+                        ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
+                        time.sleep(1)
+                        ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYDOWN, win32con.VK_SPACE, 0)
+                        time.sleep(0.1)
+                        ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYUP, win32con.VK_SPACE, 0)
+                        time.sleep(2)
+                        if _verify_main_window():
+                            log.info(f'[recover] Enter+Space combo worked on attempt {i+1}/3')
+                            clicked_login = True
+                            break
+
+                # Note: if clicked_login is still False after all retries, Step 6 will fire as last resort
 
         except Exception as e:
             log.warning(f'[recover] UIA scan failed: {e}')
 
-        # ── Step 5: wait for main window after login click (up to 25s) ──
+        # ── Step 5: short wait for main window after successful login click ──
         if clicked_login:
-            log.info('[recover] Waiting for WeChat main window after login click...')
-            for i in range(50):  # 50 × 0.5s = 25s
+            log.info('[recover] Login click succeeded, waiting for main window...')
+            for i in range(16):  # 16 × 0.5s = 8s (shorter, retry loop already verified)
                 time.sleep(0.5)
                 try:
                     hwnd = find_wechat_window()
                     if hwnd and _is_main_window(hwnd):
                         log.info(f'[recover] Main window appeared: HWND={hwnd}')
-                        # Reconnect wx4py client to new main window
                         if _wx is not None:
                             try:
                                 _wx.disconnect()
                             except Exception:
                                 pass
                         _wx = None
-                        # Trigger fresh connection immediately
                         try:
                             wx_new = get_wx()
                             log.info(f'[recover] Reconnected: {wx_new.is_connected}')
                         except Exception as e:
                             log.warning(f'[recover] Reconnect failed: {e}, will retry on next request')
-                            return
+                        return
                 except Exception:
                     pass
-                if i % 10 == 0:
-                    log.debug(f'[recover] Still waiting for main window ({i * 0.5:.0f}s)...')
-            log.warning('[recover] Timed out waiting for main window')
+            log.warning('[recover] Timed out waiting for main window after successful click')
 
         # ── Step 6: Win32 keyboard fallback (PostMessage — works without foreground) ──
         if not clicked_login:
