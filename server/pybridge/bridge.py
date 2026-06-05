@@ -1157,18 +1157,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 
 def _graceful_shutdown():
-    """Disconnect wx4py cleanly + stop worker thread to avoid crashing WeChat on restart."""
+    """Release resources without killing WeChat. Just null the wx4py reference."""
     global _wx, _worker_running
     _worker_running = False
     with _queue_cond:
         _queue_cond.notify_all()
-    if _wx is not None:
-        try:
-            _wx.disconnect()
-            log.info('[shutdown] wx4py disconnected gracefully')
-        except Exception:
-            pass
-        _wx = None
+    # NEVER call _wx.disconnect() — wx4py's COM cleanup crashes WeChat.
+    # Just drop the reference; new bridge instance will create fresh client.
+    _wx = None
 
 def main():
     import atexit
