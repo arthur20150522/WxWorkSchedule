@@ -93,6 +93,7 @@ def _is_main_window(hwnd):
 AUTO_RECOVER_ENABLED = True
 AUTO_RECOVER_INTERVAL = 300  # check every 5min
 LAST_RECOVER_ACTION = 0      # timestamp of last recovery action (cooldown)
+_recover_lock = threading.Lock()  # prevent concurrent recovery threads
 
 def try_auto_recover():
     """Auto-recovery: reconnect wx4py if needed, then handle login page."""
@@ -102,6 +103,11 @@ def try_auto_recover():
 
         # Cooldown: if we did recovery action in last 10min, skip to avoid re-triggering
         if time.time() - LAST_RECOVER_ACTION < 600:
+            return
+
+        # Lock: only one recovery thread at a time (prevents concurrent bombing)
+        if not _recover_lock.acquire(blocking=False):
+            log.info('[recover] Another recovery already running, skipping...')
             return
 
         def click_at(cx, cy):
@@ -412,6 +418,11 @@ def try_auto_recover():
 
     except Exception as e:
         log.error(f'[recover] Error: {e}')
+    finally:
+        try:
+            _recover_lock.release()
+        except Exception:
+            pass
 
 
 def _auto_recover_loop():
@@ -641,19 +652,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send({'ok': False, 'reason': detail, 'stage': 'waiting'})
             elif state in ('popup', 'login'):
                 self._send({'ok': False, 'reason': detail, 'stage': state})
-                # Auto-trigger recovery for popup/login
-                threading.Thread(target=try_auto_recover, daemon=True).start()
-                log.info(f'[recover] Auto-triggered for {state}: {detail}')
+                # Recovery is handled by the 5-min background loop (no auto-trigger here)
             else:
                 self._send({'ok': False, 'reason': detail, 'stage': 'unknown'})
-                # Still try recovery for unknown states
-                threading.Thread(target=try_auto_recover, daemon=True).start()
-                log.info(f'[recover] Auto-triggered for unknown: {detail}')
+                # Recovery is handled by the 5-min background loop (no auto-trigger here)
         except Exception as e:
             self._send({'ok': False, 'reason': f'健康检查异常: {e}', 'stage': 'fatal'})
 
     def _handle_recover(self):
-        """Manual trigger: run auto-recovery now (bypasses cooldown)."""
+        """Manual trigger: run auto-recovery now (bypasses cooldown, respects lock)."""
         try:
             global LAST_RECOVER_ACTION
             LAST_RECOVER_ACTION = 0  # reset cooldown for manual trigger
