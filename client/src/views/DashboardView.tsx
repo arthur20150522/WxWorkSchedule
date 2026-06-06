@@ -250,18 +250,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                 />
                                 <span className="text-xs text-gray-400">拉起微信进程</span>
                             </div>
+                        </div>
+                    )}
+                    {wechatSched && (
+                        <>
                             <button
                                 onClick={handleSaveSchedule}
                                 disabled={schedSaving}
-                                className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-1.5 mt-1"
+                                className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-1.5 mt-3"
                             >
                                 {schedSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                                 {schedSaving ? '保存中...' : '保存定时'}
                             </button>
-                            <p className="text-xs text-gray-400 text-center mt-1">
-                                每天 {wechatSched.killTime} 关闭，{wechatSched.launchTime} 拉起，绕过微信夜间踢号
-                            </p>
-                        </div>
+                            {wechatSched.enabled && (
+                                <p className="text-xs text-gray-400 text-center mt-1">
+                                    每天 {wechatSched.killTime} 关闭，{wechatSched.launchTime} 拉起
+                                </p>
+                            )}
+                        </>
                     )}
                 </div>
             </div>
