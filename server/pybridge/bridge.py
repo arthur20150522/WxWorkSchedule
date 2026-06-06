@@ -184,69 +184,28 @@ def try_auto_recover():
             all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
 
             def _uia_click(e, label):
-                """Try InvokePattern → coordinate click → PostMessage click (session-independent)."""
-                import ctypes, struct
+                """InvokePattern → coordinate click (VNC daemon keeps desktop active)."""
+                import ctypes
                 br = e.CurrentBoundingRectangle
                 cx = (br.left+br.right)//2; cy = (br.top+br.bottom)//2
 
-                # Step A: try InvokePattern
+                # Try InvokePattern
                 try:
                     pattern_obj = e.GetCurrentPattern(UIA.UIA_InvokePatternId)
                     if pattern_obj:
                         invoke = pattern_obj.QueryInterface(UIA.IUIAutomationInvokePattern)
                         invoke.Invoke()
-                        log.info(f'[recover] InvokePattern clicked "{label}"')
-                        time.sleep(3)
-                        try:
-                            hwnd2 = find_wechat_window()
-                            if hwnd2 and _is_main_window(hwnd2):
-                                log.info(f'[recover] InvokePattern worked — main window detected')
-                                return True
-                        except Exception:
-                            pass
-                        log.info(f'[recover] InvokePattern no effect, trying coordinate click...')
+                        time.sleep(1)
                 except Exception:
                     pass
 
-                # Step B: coordinate click (needs active desktop, VNC must be connected)
-                log.info(f'[recover] Coordinate click "{label}" at ({cx},{cy})')
+                # Coordinate click (works because VNC daemon keeps desktop alive)
+                log.info(f'[recover] Click "{label}" at ({cx},{cy})')
                 click_at(cx, cy)
-                time.sleep(1)
+                time.sleep(0.5)
                 ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0)
                 time.sleep(0.1)
                 ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
-
-                # Step C: PostMessage mouse click (NEVER fails, 100% session-independent)
-                time.sleep(2)
-                log.info(f'[recover] PostMessage click "{label}" at client ({cx},{cy})')
-                try:
-                    # Get window position for screen→client coordinate conversion
-                    wnd_rect = win32gui.GetWindowRect(hwnd)
-                    client_x = cx - wnd_rect[0]
-                    client_y = cy - wnd_rect[1]
-                    lparam = (client_y << 16) | (client_x & 0xFFFF)
-                    # Send mouse click directly to the WeChat window
-                    ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
-                    time.sleep(0.02)
-                    ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
-                    time.sleep(0.05)
-                    ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_LBUTTONUP, 0, lparam)
-                    log.info(f'[recover] PostMessage mouse click sent to HWND={hwnd}')
-                except Exception as ex:
-                    log.error(f'[recover] PostMessage failed: {ex}')
-                return True
-
-            def _postmessage_click(hwnd_target, screen_cx, screen_cy):
-                """Send WM_LBUTTONDOWN/UP to window at screen coordinates. Session-independent."""
-                wnd_rect = win32gui.GetWindowRect(hwnd_target)
-                client_x = screen_cx - wnd_rect[0]
-                client_y = screen_cy - wnd_rect[1]
-                lparam = (client_y << 16) | (client_x & 0xFFFF)
-                ctypes.windll.user32.PostMessageW(hwnd_target, win32con.WM_MOUSEMOVE, 0, lparam)
-                time.sleep(0.02)
-                ctypes.windll.user32.PostMessageW(hwnd_target, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
-                time.sleep(0.05)
-                ctypes.windll.user32.PostMessageW(hwnd_target, win32con.WM_LBUTTONUP, 0, lparam)
                 return True
 
             def _verify_main_window():
@@ -289,86 +248,44 @@ def try_auto_recover():
                         break
 
             if not login_elem:
-                log.info('[recover] UIA didn\'t click login, trying Win32 fallback...')
+                log.info('[recover] UIA didn\'t find login button, skipping')
             else:
                 br = login_elem.CurrentBoundingRectangle
                 btn_cx = (br.left + br.right) // 2
                 btn_cy = (br.top + br.bottom) // 2
-                btn_w = br.right - br.left
-                btn_h = br.bottom - br.top
 
-                # ── Multi-retry click: 5 attempts with different positions ──
-                # Offsets: center → top-left → bottom-right → left-center → right-center
-                offsets = [
-                    (0, 0),                                    # center
-                    (-max(10, btn_w//4), -max(5, btn_h//4)),  # top-left
-                    (max(10, btn_w//4), max(5, btn_h//4)),    # bottom-right
-                    (-max(10, btn_w//4), 0),                   # left-center
-                    (max(10, btn_w//4), 0),                    # right-center
-                ]
-
-                for attempt, (ox, oy) in enumerate(offsets, 1):
-                    cx = btn_cx + ox
-                    cy = btn_cy + oy
-                    log.info(f'[recover] Login click attempt {attempt}/5 at ({cx},{cy})')
+                # Simple 2-retry coordinate click (VNC daemon keeps desktop active)
+                for attempt in range(1, 3):
+                    cx = btn_cx + (10 if attempt == 2 else 0)  # slight offset on retry
+                    cy = btn_cy + (5 if attempt == 2 else 0)
+                    log.info(f'[recover] Coordinate click attempt {attempt}/2 at ({cx},{cy})')
                     
                     # InvokePattern
                     try:
                         pattern = login_elem.GetCurrentPattern(UIA.UIA_InvokePatternId)
                         if pattern:
                             pattern.QueryInterface(UIA.IUIAutomationInvokePattern).Invoke()
-                            time.sleep(2)
-                            if _verify_main_window():
-                                log.info(f'[recover] InvokePattern worked on attempt {attempt}')
-                                clicked_login = True
-                                break
+                            log.info(f'[recover] InvokePattern fired')
                     except Exception:
                         pass
 
-                    # Coordinate click
+                    # Coordinate click (works because VNC daemon keeps desktop alive)
                     click_at(cx, cy)
                     time.sleep(0.5)
                     ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, 0, 0)
                     time.sleep(0.1)
                     ctypes.windll.user32.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
-                    time.sleep(1)
-
-                    if _verify_main_window():
-                        log.info(f'[recover] Coordinate click worked on attempt {attempt}')
-                        clicked_login = True
-                        break
-
-                    # PostMessage mouse click
-                    time.sleep(1)
-                    _postmessage_click(hwnd, cx, cy)
-                    log.info(f'[recover] PostMessage click sent at ({cx},{cy}) for HWND={hwnd}')
                     time.sleep(2)
 
                     if _verify_main_window():
-                        log.info(f'[recover] PostMessage click worked on attempt {attempt}')
+                        log.info(f'[recover] Login successful on attempt {attempt}')
                         clicked_login = True
                         break
-
-                    log.info(f'[recover] Attempt {attempt}/5 no effect, retrying...')
+                    
+                    log.info(f'[recover] Attempt {attempt}/2 no effect, retrying...')
 
                 if not clicked_login:
-                    # Final fallback: PostMessage Enter + Space combo × 3
-                    log.info('[recover] All 5 clicks failed, trying Enter+Space combo...')
-                    for i in range(3):
-                        ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
-                        time.sleep(0.1)
-                        ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
-                        time.sleep(1)
-                        ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYDOWN, win32con.VK_SPACE, 0)
-                        time.sleep(0.1)
-                        ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYUP, win32con.VK_SPACE, 0)
-                        time.sleep(2)
-                        if _verify_main_window():
-                            log.info(f'[recover] Enter+Space combo worked on attempt {i+1}/3')
-                            clicked_login = True
-                            break
-
-                # Note: if clicked_login is still False after all retries, Step 6 will fire as last resort
+                    log.info('[recover] Both attempts failed, will retry next cycle')
 
         except Exception as e:
             log.warning(f'[recover] UIA scan failed: {e}')
@@ -398,23 +315,8 @@ def try_auto_recover():
                     pass
             log.warning('[recover] Timed out waiting for main window after successful click')
 
-        # ── Step 6: Win32 keyboard fallback (PostMessage — works without foreground) ──
-        if not clicked_login:
-            log.info('[recover] UIA didn\'t click login, trying Win32 fallback...')
-            # PostMessage sends keystrokes directly to the window, no foreground needed
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
-            time.sleep(0.3)
-            # Send Enter via PostMessage (session-independent)
-            ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
-            time.sleep(0.1)
-            ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
-            time.sleep(2)
-            # Second Enter (in case first dismissed a popup)
-            ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
-            time.sleep(0.1)
-            ctypes.windll.user32.PostMessageW(hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
-            log.info('[recover] Win32 PostMessage Enter × 2 sent')
-            LAST_RECOVER_ACTION = time.time()
+        # ── Step 6: no longer needed — VNC daemon keeps desktop active, coordinate clicks work.
+        # This step is intentionally empty.
 
     except Exception as e:
         log.error(f'[recover] Error: {e}')
