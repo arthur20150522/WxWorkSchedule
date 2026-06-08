@@ -7,7 +7,7 @@ node_modules
 coverage
 
 # Production
-dist
+# dist  — un-ignored for server/dist/ (tracked to ensure remote always has compiled JS)
 build
 
 # Misc
@@ -37,7 +37,7 @@ server/.env
 users/
 
 # Build artifacts
-server/dist/
+# server/dist/  — TRACKED: ensures remote always has latest compiled JS
 client/dist/
 
 # Temp / debug files
