@@ -37,6 +37,8 @@
 本地修改 → git add + commit → git push origin fork4win
     ↓
 远程服务器 → git pull origin fork4win → npx tsc → pm2 restart wx-schedule
+
+⚠️ PM2 入口是 `dist/index.js`（不是 `dist/api.js`）！`api.js` 只导出 Express app，不会 listen 端口。
 ```
 
 规则：
@@ -49,7 +51,7 @@
 - IP: `39.106.127.176`
 - 用户: `Administrator` (SSH key 认证)
 - 项目路径: `C:\Users\Administrator\WxWorkSchedule`
-- PM2 进程名: `wx-schedule`
+- PM2 进程名: `wx-schedule`（入口: `server/dist/index.js`，不是 `api.js`）
 - 域名: `wechat.eastpolar.top` (nginx → :3000)
 
 ---
