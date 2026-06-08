@@ -155,14 +155,53 @@ def main():
             if w == 0 or h == 0:
                 DESKTOP_W = 1920
                 DESKTOP_H = 1080
-                log.info(f'VNC desktop is {w}x{h} — requesting {DESKTOP_W}x{DESKTOP_H}...')
-                # SetDesktopSize message (type 251)
-                msg = struct.pack('!BxHHBx', 251, DESKTOP_W, DESKTOP_H, 1)
-                msg += struct.pack('!IhhhhI', 0, 0, 0, DESKTOP_W, DESKTOP_H, 0)
-                sock.sendall(msg)
-                # Read updated framebuffer info
-                time.sleep(1)
+                log.info(f'VNC desktop is {w}x{h} — attempting to set {DESKTOP_W}x{DESKTOP_H}...')
+                
+                # Method 1: Windows ChangeDisplaySettings (most reliable)
                 try:
+                    import ctypes
+                    DM_PELSWIDTH = 0x80000
+                    DM_PELSHEIGHT = 0x100000
+                    CDS_UPDATEREGISTRY = 1
+                    class DEVMODEW(ctypes.Structure):
+                        _fields_ = [
+                            ("dmDeviceName", ctypes.c_wchar * 32),
+                            ("dmSpecVersion", ctypes.c_ushort),
+                            ("dmDriverVersion", ctypes.c_ushort),
+                            ("dmSize", ctypes.c_ushort),
+                            ("dmDriverExtra", ctypes.c_ushort),
+                            ("dmFields", ctypes.c_uint),
+                            ("dmPositionX", ctypes.c_long), ("dmPositionY", ctypes.c_long),
+                            ("dmDisplayOrientation", ctypes.c_uint),
+                            ("dmDisplayFixedOutput", ctypes.c_uint),
+                            ("dmColor", ctypes.c_short), ("dmDuplex", ctypes.c_short),
+                            ("dmYResolution", ctypes.c_short), ("dmTTOption", ctypes.c_short),
+                            ("dmCollate", ctypes.c_short),
+                            ("dmFormName", ctypes.c_wchar * 32),
+                            ("dmLogPixels", ctypes.c_ushort),
+                            ("dmBitsPerPel", ctypes.c_uint),
+                            ("dmPelsWidth", ctypes.c_uint),
+                            ("dmPelsHeight", ctypes.c_uint),
+                            ("dmDisplayFlags", ctypes.c_uint),
+                            ("dmDisplayFrequency", ctypes.c_uint),
+                            ("dmDisplayFrequency", ctypes.c_uint),
+                        ]
+                    devmode = DEVMODEW()
+                    devmode.dmSize = ctypes.sizeof(devmode)
+                    devmode.dmPelsWidth = DESKTOP_W
+                    devmode.dmPelsHeight = DESKTOP_H
+                    devmode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT
+                    result = ctypes.windll.user32.ChangeDisplaySettingsW(ctypes.byref(devmode), CDS_UPDATEREGISTRY)
+                    log.info(f'ChangeDisplaySettings result: {result} (0=success)')
+                except Exception as e:
+                    log.warning(f'ChangeDisplaySettings failed: {e}')
+                
+                # Method 2: RFB SetDesktopSize
+                try:
+                    msg = struct.pack('!BxHHBx', 251, DESKTOP_W, DESKTOP_H, 1)
+                    msg += struct.pack('!IhhhhI', 0, 0, 0, DESKTOP_W, DESKTOP_H, 0)
+                    sock.sendall(msg)
+                    time.sleep(1)
                     sock.settimeout(5)
                     fb2 = b''
                     while len(fb2) < 24:
@@ -171,7 +210,7 @@ def main():
                     new_h = int.from_bytes(fb2[2:4], 'big')
                     log.info(f'VNC desktop now: {new_w}x{new_h}')
                 except Exception as e:
-                    log.warning(f'Failed to read new desktop size: {e}')
+                    log.warning(f'RFB SetDesktopSize failed: {e}')
             
             delay = 10  # reset delay
             
