@@ -89,10 +89,104 @@ def _is_main_window(hwnd):
         return False
 
 
+# ── Hard recovery utilities (kill + launch, reusable from both HTTP and auto-recover) ──
+
+def _kill_wechat():
+    """Kill all WeChat processes. Returns count of killed PIDs."""
+    import psutil, subprocess
+    killed = 0
+    # Method 1: psutil kill by known process names
+    for proc in psutil.process_iter(['pid', 'name']):
+        name = (proc.info['name'] or '').lower()
+        if name in ('weixin.exe', 'wechatappex.exe', 'wechat.exe'):
+            try:
+                p = psutil.Process(proc.info['pid'])
+                for child in p.children(recursive=True):
+                    try: child.kill(); killed += 1
+                    except: pass
+                p.kill(); killed += 1
+            except: pass
+    # Method 2: taskkill by name for any stragglers
+    for exe in ['Weixin.exe', 'WeChatAppEx.exe', 'WeChat.exe']:
+        try:
+            subprocess.run(['taskkill', '/F', '/IM', exe],
+                          capture_output=True, timeout=5)
+        except: pass
+    time.sleep(1)
+    # Follow-up kill
+    for exe in ['Weixin.exe', 'WeChatAppEx.exe', 'WeChat.exe']:
+        try:
+            subprocess.run(['taskkill', '/F', '/IM', exe],
+                          capture_output=True, timeout=3)
+        except: pass
+    log.info(f'[recover] Killed WeChat ({killed} PIDs + taskkill)')
+    return killed
+
+def _launch_wechat():
+    """Launch WeChat and return True if launched successfully."""
+    import os, subprocess, winreg as wr
+    
+    # Try known paths
+    paths = []
+    try:
+        key = wr.OpenKey(wr.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Weixin.exe')
+        p, _ = wr.QueryValueEx(key, '')
+        if p: paths.append(p)
+    except: pass
+    
+    # Auto-find from disk
+    for base in [os.environ.get('ProgramFiles', 'C:\\Program Files'),
+                 os.environ.get('ProgramFiles(x86)', 'C:\\Program Files (x86)'),
+                 os.environ.get('LOCALAPPDATA', '')]:
+        for sub in ['Tencent\\Weixin\\Weixin.exe', 'Tencent\\WeChat\\WeChat.exe',
+                     'Tencent\\WeChatAppEx\\WeChatAppEx.exe']:
+            fp = os.path.join(base, sub)
+            if os.path.exists(fp):
+                paths.append(fp)
+    
+    # Try shell:AppsFolder as last resort
+    if not paths:
+        try:
+            out = subprocess.check_output(
+                'powershell -NoProfile -c "Get-StartApps | Where-Object { \\$_.Name -eq \'\\u5fae\\u4fe1\' } | Select-Object -ExpandProperty AppID"',
+                shell=True, encoding='gbk', errors='ignore', timeout=10
+            )
+            appid = out.strip()
+            if appid:
+                subprocess.Popen(f'explorer shell:AppsFolder\\{appid}', shell=True)
+                log.info(f'[recover] Launched via shell:AppsFolder')
+                return True
+        except: pass
+        log.warning('[recover] Could not find WeChat exe path')
+        return False
+    
+    for exe in paths:
+        if os.path.exists(exe):
+            subprocess.Popen([exe], shell=True)
+            log.info(f'[recover] Launched WeChat: {exe}')
+            return True
+    
+    log.warning('[recover] No valid WeChat exe found')
+    return False
+
+def _get_wechat_ui_node_count(hwnd):
+    """Quick UIA scan: return total node count, or -1 on error."""
+    try:
+        import pythoncom; pythoncom.CoInitialize()
+        import comtypes.client as cc
+        import comtypes.gen.UIAutomationClient as UIA
+        uia = cc.CreateObject('{ff48dba4-60ef-4201-aa87-54103eef594e}', interface=UIA.IUIAutomation)
+        elem = uia.ElementFromHandle(hwnd)
+        return elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition()).Length
+    except Exception:
+        return -1
+
+
 # ── Auto-recovery: detect login page and click "进入微信" ─────────────
 AUTO_RECOVER_ENABLED = True
 AUTO_RECOVER_INTERVAL = 300  # check every 5min
 LAST_RECOVER_ACTION = 0      # timestamp of last recovery action (cooldown)
+HARD_RECOVER_COOLDOWN = 0    # separate cooldown for hard recovery (prevent kill loops)
 _recover_lock = threading.Lock()  # prevent concurrent recovery threads
 
 def try_auto_recover():
@@ -109,6 +203,30 @@ def try_auto_recover():
         if not _recover_lock.acquire(blocking=False):
             log.info('[recover] Another recovery already running, skipping...')
             return
+
+        # ── Step 0: Hard recovery for white screen (loading with ≤3 nodes) ──
+        global HARD_RECOVER_COOLDOWN
+        try:
+            hwnd = find_wechat_window()
+            if hwnd:
+                node_count = _get_wechat_ui_node_count(hwnd)
+                if 0 < node_count <= 3 and not _is_main_window(hwnd):
+                    now = time.time()
+                    if now - HARD_RECOVER_COOLDOWN < 1800:  # max once per 30min
+                        log.info(f'[recover] White screen ({node_count} nodes) but hard-recover cooldown active, skipping')
+                    else:
+                        log.info(f'[recover] White screen detected ({node_count} nodes) → triggering hard recovery (kill + relaunch)')
+                        LAST_RECOVER_ACTION = now
+                        HARD_RECOVER_COOLDOWN = now
+                        _kill_wechat()
+                        time.sleep(5)
+                        _launch_wechat()
+                        time.sleep(20)  # wait for WeChat to fully start
+                        # After hard recovery, continue to normal recover flow for login click
+                elif node_count <= 3 and _is_main_window(hwnd):
+                    log.info(f'[recover] Detected main window with few nodes ({node_count}), may be transient — will retry next cycle')
+        except Exception as e:
+            log.warning(f'[recover] White screen check failed: {e}')
 
         def click_at(cx, cy):
             ctypes.windll.user32.SetCursorPos(cx, cy)

@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",
+    "start:prod": "npx tsc && node dist/api.js",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "bridge": "python pybridge/bridge.py",
