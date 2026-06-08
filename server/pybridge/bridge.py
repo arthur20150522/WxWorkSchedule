@@ -75,6 +75,67 @@ def get_wx():
         log.info(f'Connected: {_wx.is_connected}')
     return _wx
 
+def soft_rebind_uia():
+    """
+    Soft-rebind wx4py UIA session WITHOUT killing WeChat.
+
+    Use case: after WeChat was killed+relaunched externally, or after VNC
+    desktop reset, the cached UIA session inside wx4py points to stale
+    HWNDs. A full disconnect+connect rebuilds the session against the
+    CURRENT WeChat process while keeping WeChat running.
+    """
+    global _wx
+    result = {'ok': False, 'before': None, 'after': None, 'hwnd': None}
+    try:
+        # Snapshot pre-state
+        before_hwnd = None
+        before_connected = False
+        try:
+            wx = get_wx()
+            before_connected = wx.is_connected
+            if hasattr(wx, '_window') and getattr(wx._window, 'hwnd', None):
+                before_hwnd = wx._window.hwnd
+        except Exception:
+            pass
+        result['before'] = {'connected': before_connected, 'hwnd': before_hwnd}
+
+        # Force disconnect (don't kill WeChat!)
+        try:
+            wx = get_wx()
+            try:
+                wx.disconnect()
+            except Exception as e:
+                log.debug(f'[soft-rebind] disconnect exception (ignored): {e}')
+        except Exception:
+            pass
+
+        # Drop the cached client entirely
+        _wx = None
+
+        # Re-create + re-connect
+        from wx4py import WeChatClient
+        new_wx = WeChatClient(auto_connect=False)
+        try:
+            new_wx.connect()
+        except Exception as e:
+            log.error(f'[soft-rebind] reconnect failed: {e}')
+            return {**result, 'ok': False, 'error': str(e)}
+
+        _wx = new_wx
+        after_connected = new_wx.is_connected
+        after_hwnd = None
+        if hasattr(new_wx, '_window') and getattr(new_wx._window, 'hwnd', None):
+            after_hwnd = new_wx._window.hwnd
+        result['after'] = {'connected': after_connected, 'hwnd': after_hwnd}
+        result['hwnd'] = after_hwnd
+        result['ok'] = after_connected
+
+        log.info(f'[soft-rebind] OK: before={result["before"]} → after={result["after"]}')
+        return result
+    except Exception as e:
+        log.error(f'[soft-rebind] failed: {e}')
+        return {**result, 'ok': False, 'error': str(e)}
+
 def _is_main_window(hwnd):
     """Check if hwnd is WeChat main window (> 30 UIA elements, login page has < 25)."""
     try:
@@ -203,6 +264,45 @@ def try_auto_recover():
         if not _recover_lock.acquire(blocking=False):
             log.info('[recover] Another recovery already running, skipping...')
             return
+
+        # ── Step -1: Detect stale wx4py session and soft-rebind (NO KILL) ──
+        # Symptom: bridge.is_connected=True, HWND is current, but click/send
+        # silently fails because the cached UIA session inside wx4py points
+        # to old (now-dead) HWNDs. We detect by checking if wx4py's cached
+        # hwnd matches the live one — if not, soft-rebind without killing.
+        try:
+            wx = get_wx()
+            if wx.is_connected:
+                cached_hwnd = None
+                try:
+                    if hasattr(wx, '_window') and getattr(wx._window, 'hwnd', None):
+                        cached_hwnd = wx._window.hwnd
+                except Exception:
+                    pass
+                # Compare cached hwnd to live hwnd
+                live_hwnd = 0
+                try:
+                    from wx4py.core.win32 import find_wechat_window
+                    live_hwnd = find_wechat_window() or 0
+                except Exception:
+                    pass
+                if cached_hwnd and live_hwnd and cached_hwnd != live_hwnd:
+                    log.warning(f'[recover] Stale wx4py session: cached_hwnd={cached_hwnd}, live_hwnd={live_hwnd} → soft-rebind')
+                    rebind_result = soft_rebind_uia()
+                    if rebind_result.get('ok'):
+                        log.info(f'[recover] Soft-rebind OK: {rebind_result}')
+                    else:
+                        log.warning(f'[recover] Soft-rebind failed: {rebind_result}')
+                    LAST_RECOVER_ACTION = time.time()
+                elif cached_hwnd and not win32gui.IsWindow(cached_hwnd):
+                    log.warning(f'[recover] Cached hwnd {cached_hwnd} is dead → soft-rebind')
+                    rebind_result = soft_rebind_uia()
+                    if rebind_result.get('ok'):
+                        log.info(f'[recover] Soft-rebind OK after dead hwnd')
+                    LAST_RECOVER_ACTION = time.time()
+                # else: hwnd matches → no stale session, skip
+        except Exception as e:
+            log.debug(f'[recover] soft-rebind check failed: {e}')
 
         # ── Step 0: Hard recovery for white screen (loading with ≤3 nodes) ──
         global HARD_RECOVER_COOLDOWN
@@ -505,6 +605,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_wechat_diag()
             elif path == '/find-wechat':
                 self._handle_find_wechat()
+            elif path == '/soft-rebind-uia':
+                self._handle_soft_rebind()
             elif path.startswith('/task/'):
                 self._handle_task_status(path)
             else:
@@ -525,6 +627,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_wechat_kill()
             elif path == '/wechat-launch':
                 self._handle_wechat_launch()
+            elif path == '/soft-rebind-uia':
+                self._handle_soft_rebind()
             else:
                 self._send({'error': 'not found'}, 404)
         except Exception as e:
@@ -1022,6 +1126,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'success': False, 'error': '找不到微信程序路径'})
         except Exception as e:
             self._send({'success': False, 'error': str(e)})
+
+    def _handle_soft_rebind(self):
+        """POST /soft-rebind-uia — rebuild wx4py UIA session without killing WeChat."""
+        try:
+            result = soft_rebind_uia()
+            status = 200 if result.get('ok') else 500
+            self._send(result, status)
+        except Exception as e:
+            log.error(f'soft-rebind handler: {e}')
+            self._send({'ok': False, 'error': str(e)}, 500)
 
     def _handle_find_wechat(self):
         """GET /find-wechat — debug: report all path search attempts."""
