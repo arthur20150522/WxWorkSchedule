@@ -607,6 +607,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_find_wechat()
             elif path == '/soft-rebind-uia':
                 self._handle_soft_rebind()
+            elif path == '/search-dump':
+                self._handle_search_dump()
             elif path.startswith('/task/'):
                 self._handle_task_status(path)
             else:
@@ -1136,6 +1138,128 @@ class BridgeHandler(BaseHTTPRequestHandler):
         except Exception as e:
             log.error(f'soft-rebind handler: {e}')
             self._send({'ok': False, 'error': str(e)}, 500)
+
+    def _handle_search_dump(self):
+        """
+        GET /search-dump?keyword=xxx — click search box, type keyword, then dump UIA.
+        Used to debug what popup/result list structure WeChat actually shows.
+        """
+        try:
+            from urllib.parse import urlparse, parse_qs
+            query = urlparse(self.path).query
+            params = parse_qs(query)
+            keyword = params.get('keyword', ['测试'])[0]
+
+            import pythoncom; pythoncom.CoInitialize()
+            import comtypes.client as cc
+            import comtypes.gen.UIAutomationClient as UIA
+            import time as t
+
+            hwnd = self._get_wechat_hwnd()
+            if not hwnd:
+                self._send({'error': 'no wechat hwnd'}); return
+
+            uia_obj = cc.CreateObject('{ff48dba4-60ef-4201-aa87-54103eef594e}', interface=UIA.IUIAutomation)
+            root = uia_obj.ElementFromHandle(hwnd)
+
+            def find_by_name(elem, name_substr):
+                cond = uia_obj.CreatePropertyCondition(
+                    UIA.UIA_NamePropertyId,
+                    uia_obj.CreateVariant(name_substr).GetElement()
+                ) if False else None
+                # Use the simpler approach: iterate all
+                all_e = elem.FindAll(UIA.TreeScope_Subtree, uia_obj.CreateTrueCondition())
+                for i in range(all_e.Length):
+                    e = all_e.GetElement(i)
+                    n = (e.CurrentName or '')
+                    if name_substr in n:
+                        return e
+                return None
+
+            def find_by_class(elem, class_name):
+                cond = uia_obj.CreatePropertyCondition(UIA.UIA_ClassNamePropertyId, class_name)
+                return elem.FindFirst(UIA.TreeScope_Subtree, cond)
+
+            # Step 1: find search field
+            search_field = find_by_class(root, 'mmui::XSearchField')
+            if not search_field:
+                # try by name
+                search_field = find_by_name(root, '搜索')
+            if not search_field:
+                self._send({'error': 'no search field found'}); return
+
+            # Step 2: click + type
+            try:
+                ip = search_field.GetCurrentPattern(UIA.UIA_InvokePatternId)
+                if ip: ip.Invoke()
+            except Exception:
+                pass
+            t.sleep(0.3)
+            try:
+                search_field.SetFocus()
+            except Exception:
+                pass
+            t.sleep(0.3)
+
+            # Clear: Ctrl+A then Delete
+            try:
+                vp = search_field.GetCurrentPattern(UIA.UIA_ValuePatternId)
+                if vp:
+                    vp.SetValue('')
+            except Exception:
+                pass
+            t.sleep(0.2)
+
+            # Type the keyword
+            try:
+                vp = search_field.GetCurrentPattern(UIA.UIA_ValuePatternId)
+                if vp:
+                    vp.SetValue(keyword)
+                else:
+                    # fallback SendKeys via Win32
+                    import win32api, win32con
+                    for ch in keyword:
+                        win32api.SendMessage(hwnd, win32con.WM_CHAR, ord(ch), 0)
+            except Exception as e:
+                log.warning(f'search-dump type error: {e}')
+            t.sleep(1.5)  # wait for results
+
+            # Step 3: dump full UIA
+            all_e = root.FindAll(UIA.TreeScope_Subtree, uia_obj.CreateTrueCondition())
+            elements = []
+            seen_classes = {}
+            for i in range(all_e.Length):
+                e = all_e.GetElement(i)
+                n = (e.CurrentName or '').strip()
+                c = e.CurrentClassName or ''
+                ct = e.CurrentControlType if hasattr(e, 'CurrentControlType') else 0
+                try:
+                    br = e.CurrentBoundingRectangle
+                    rect = [br.left, br.top, br.right - br.left, br.bottom - br.top]
+                except:
+                    rect = None
+                try:
+                    pi = e.GetCurrentPattern(UIA.UIA_InvokePatternId)
+                    has_invoke = bool(pi)
+                except:
+                    has_invoke = False
+                if n or c:
+                    elements.append({
+                        'idx': i, 'name': n, 'class': c,
+                        'controlType': ct, 'hasInvoke': has_invoke, 'rect': rect
+                    })
+                    seen_classes[c] = seen_classes.get(c, 0) + 1
+
+            self._send({
+                'hwnd': hwnd,
+                'keyword': keyword,
+                'total': len(elements),
+                'seen_classes': seen_classes,
+                'elements': elements
+            })
+        except Exception as e:
+            import traceback
+            self._send({'error': str(e), 'trace': traceback.format_exc()}, 500)
 
     def _handle_find_wechat(self):
         """GET /find-wechat — debug: report all path search attempts."""
