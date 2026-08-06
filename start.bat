@@ -84,12 +84,12 @@ if not exist node_modules (
 )
 
 echo.
-echo  [5/5] Installing wx4py ...
-pip install wx4py
+echo  [5/5] Installing wx4py (custom fork) ...
+pip install git+https://github.com/arthur20150522/wx4py.git --force-reinstall
 if %errorlevel% neq 0 (
-    echo   [WARN] wx4py install failed. Run manually: pip install wx4py
+    echo   [WARN] wx4py fork install failed.
 ) else (
-    echo   OK: wx4py installed
+    echo   OK: wx4py fork installed
 )
 
 echo.

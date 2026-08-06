@@ -4,6 +4,9 @@
 $ErrorActionPreference = "Stop"
 $BASE = Split-Path -Parent $MyInvocation.MyCommand.Path
 
+Write-Host "0. Update wx4py fork..." -ForegroundColor Cyan
+pip install git+https://github.com/arthur20150522/wx4py.git --force-reinstall
+
 Write-Host "1. Install server deps + compile..." -ForegroundColor Cyan
 Set-Location "$BASE\server"
 npm install
