@@ -186,6 +186,15 @@ metadata:
 - **验证** server `tsc --noEmit` ✅ / bridge.py `py_compile` ✅（1252 行 SyntaxWarning 为既有代码，未动）
 - **注意** ⚠️ `.env` 不进 git — 服务器部署时需手动在远程 `server/.env` 补同样的 `QR_PUSH_SECRET` + `PUBLIC_BASE_URL`，否则 bridge 上传会被 403
 
+### — 部署 + 真实掉线事件端到端验证
+
+- **部署** commit `c876772` push → 远程 pull → 远程 `.env` 补 QR_PUSH_SECRET/PUBLIC_BASE_URL → Pillow 已有(12.3.0) → `npx tsc` → pm2 restart wx-schedule + wx-bridge ✅
+- **BUG（证据归因修复）** 触发 /recover 后 bridge 日志零输出 → 前台 ssh 复现发现会话隔离（ssh 看不到 GUI 窗口）→ 改查 bridge 自带端点：`/dump-uia` 显示当前窗口 36 个 UIA 节点（登录页 27 + 弹窗 9）→ **根因**：`_is_main_window` 用 `>30 节点` 启发式，登录页+弹窗叠加 36>30 误判为"主界面" → Step 1 快速跳过静默 return，恢复流程从不执行
+- **修复** commit `11b4bae`：①`_is_main_window` 先排除登录标记（LoginWindow 类/我知道了/进入微信/登录/切换账号/仅传输文件）再数节点 ②`find_wechat_window` 导入提到函数顶部（Step 0 白屏检查在 wx4py 断开路径必 NameError 失效）③无登录按钮分支推 QR 前检查主界面标记（搜索/ChatInputField）防误推
+- **端到端验证 ✅（真实掉线场景）**：/recover → 自动点"我知道了"(959,552) → 检测到二维码窗口 → GDI 截图 12KB → 上传 → 双通道推送成功（`[Push:鸿蒙] (with image)` + `[Push:安卓]`）→ 公网 URL `HTTP 200 image/png` → 下载目检确认是清晰可扫的"扫码登录"二维码
+- **后续行为**：二维码 ~2min 过期；recover 每 5min 巡检，QR 推送冷却 15min — 用户不扫码则每 15min 推一次新截图直到登录恢复
+- **闭环确认** 用户扫码后 deep-health 返回 `ok / 正常 — 主界面已就绪` ✅ 全链路真实验证完成
+
 ---
 
 ## 待办
