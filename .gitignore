@@ -33,6 +33,7 @@ server/config.json
 server/.user
 server/users/
 server/.env
+server/data/qr/
 .user
 users/
 

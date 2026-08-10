@@ -7,12 +7,13 @@ import { verifyPassword, generateToken } from './auth.js';
 import { authenticateToken, AuthRequest } from './authMiddleware.js';
 import { wxBridge } from './wxBridge.js';
 import { pushNotify } from './pushNotify.js';
+import { registerQrRoutes } from './qrRelay.js';
 import { taskQueue } from './taskQueue.js';
 import { calculateNextTime } from './taskQueue.js';
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '10mb' })); // raised for base64 QR screenshots
 
 const handleError = (res: express.Response, e: unknown) => {
   console.error(e);
@@ -42,6 +43,9 @@ app.post('/api/login', async (req, res) => {
     handleError(res, e);
   }
 });
+
+// ── QR login relay (public — called by bridge.py with shared secret) ──
+registerQrRoutes(app);
 
 // ── Protected routes ─────────────────────────────────────
 const apiRouter = express.Router();

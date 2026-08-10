@@ -144,6 +144,47 @@ metadata:
 6. **认证**: 任意 username + 明文→bcrypt 自动迁移 + JWT 7d
 7. **导入导出**: GET/POST /api/data/{export,import}，一个 JSON
 8. **DB 路径**: `import.meta.url` + `__dirname` + `..` 定位，不依赖 `process.cwd()`
+9. **wx4py fork**: `pip install git+https://github.com/arthur20150522/wx4py.git`，禁止 PyPI 原版
+10. **代码部署铁律**: 所有变更必须通过 git push/pull，严禁 scp 或直接修改远程文件
+11. **SSH 部署别名**: `ssh wxserver` → 39.106.127.176
+
+---
+
+## 2026-08-06 操作日志
+
+### 17:00 ~ 18:10 — wx4py fork 修复 + 完整部署
+
+- **17:00** **发现** 服务器 wx4py 是原版 claw-codes/wx4py 0.2.1，非我们的 fork
+- **17:05** **发现** 本地 wx4py editable install 源目录已被清理 → 重装 fork
+- **17:10** **验证** fork 核心改动 `core/win32.py` `find_wechat_window()`：weixin.exe +100, WeChatAppEx.exe -200
+- **17:15** **澄清** README 的 FindAll 绕过在 bridge.py 独立实现，不依赖 wx4py 包
+- **17:20** 本地测试：wx4py fork 连接微信 → 搜索 Alex → 发送 ✅
+- **17:25** **修复 SSH**：服务器需 `HostKeyAlgorithms=+ssh-rsa` → 更新 `~/.ssh/config` 添加 `Host wxserver`
+- **17:30** 修改 `start.bat` + `remote_deploy.ps1`：wx4py 安装指向 fork
+- **17:40** `git push` → 服务器 `git pull` + `pip install fork` (21min/10KBps) + `tsc` + `pm2 restart all` ✅
+- **17:55** 发现服务器 Node v16.20.2 过旧(包需 Node 18+)，编译仍通过
+- **18:05** `/unified-push` 推送部署结果到鸿蒙 + 安卓 ✅
+
+### 关键教训
+
+4. **bridge.py 的 FindAll 是独立魔改** — 直接用 comtypes UIA API
+5. **服务器 pip 极慢 (10KB/s)** — 建议预下载 wheel 或使用国内镜像
+6. **服务器 SSH 需 `ssh-rsa`** — 已配置别名
+
+---
+
+## 2026-08-10 操作日志
+
+### — 掉线二维码截图推送
+
+- **需求** 微信被踢出登录（"为了你的账号安全，请重新登录"）时，自动点掉弹窗 → 点"进入微信" → 若出现二维码登录窗口 → 截图 → 推送到手机
+- **排查结论** 现有 `try_auto_recover()` 已会点"我知道了"+"进入微信"，缺 QR 截图+推送；MeoW（api.chuckfang.com，文档确认支持 `msgType=html` 内联 `<img>`）和 Server酱 Turbo（desp markdown 外链图，**不支持 base64**）推图片都必须先办公网 URL
+- **feat** `server/src/qrRelay.ts` 新建 — `POST /api/qr-notify`（bridge 本地上传 base64 截图，`QR_PUSH_SECRET` 校验，随机 32hex token 存 `server/data/qr/`，10min 自动删，新图覆盖旧图）+ `GET /api/qr/:file`（免鉴权出图，token 即凭证）→ 复用 pushNotify 双通道推送
+- **feat** `server/src/pushNotify.ts` — pushNotify 增加可选 imageUrl 参数：MeoW 走 POST `msgType=html&htmlHeight=480` + `<img>` + `url` 跳转；Server酱 desp 追加 `![二维码](url)` + 纯链接兜底
+- **feat** `server/pybridge/bridge.py` — 新增 `_capture_window_png()`（GDI BitBlt 截窗口区域，需 Pillow）+ `push_qr_screenshot()`（读 `../.env` 取密钥和端口，POST 127.0.0.1:3000/api/qr-notify，15min 推送冷却）；两个触发点：①点完"进入微信"等主界面 8s 超时 ②UIA 找不到登录按钮（二维码窗口已在显示）
+- **config** `server/.env` 新增 `QR_PUSH_SECRET`（随机 48hex）+ `PUBLIC_BASE_URL=https://wechat.eastpolar.top`；`.gitignore` 加 `server/data/qr/`；`requirements.txt` 加 Pillow；api.ts bodyParser limit 提升 10mb
+- **验证** server `tsc --noEmit` ✅ / bridge.py `py_compile` ✅（1252 行 SyntaxWarning 为既有代码，未动）
+- **注意** ⚠️ `.env` 不进 git — 服务器部署时需手动在远程 `server/.env` 补同样的 `QR_PUSH_SECRET` + `PUBLIC_BASE_URL`，否则 bridge 上传会被 403
 
 ---
 

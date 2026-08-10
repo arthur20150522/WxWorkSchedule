@@ -250,6 +250,136 @@ LAST_RECOVER_ACTION = 0      # timestamp of last recovery action (cooldown)
 HARD_RECOVER_COOLDOWN = 0    # separate cooldown for hard recovery (prevent kill loops)
 _recover_lock = threading.Lock()  # prevent concurrent recovery threads
 
+# ── QR login screenshot push ──────────────────────────────────────────
+QR_PUSH_COOLDOWN = 900       # at most one QR push per 15min
+_LAST_QR_PUSH = 0
+
+def _read_env_cfg():
+    """Read server/.env (../.env relative to this file) → dict."""
+    import os
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env')
+    cfg = {}
+    try:
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    cfg[k.strip()] = v.strip()
+    except Exception as e:
+        log.warning(f'[qr] Cannot read .env: {e}')
+    return cfg
+
+def _capture_window_png(hwnd):
+    """Capture the window's screen region → PNG bytes. Returns None on failure.
+    Requires the window to be foreground-visible (BitBlt reads real pixels)."""
+    import ctypes
+    from ctypes import wintypes
+    import win32gui
+    try:
+        from PIL import Image
+    except ImportError:
+        log.warning('[qr] Pillow not installed — cannot encode PNG, skipping push')
+        return None
+    import io
+
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    # Clip to screen bounds (window may hang off-edge)
+    user32 = ctypes.windll.user32
+    sw = user32.GetSystemMetrics(0)
+    sh = user32.GetSystemMetrics(1)
+    left, top = max(0, left), max(0, top)
+    right, bottom = min(sw, right), min(sh, bottom)
+    w, h = right - left, bottom - top
+    if w < 50 or h < 50:
+        log.warning(f'[qr] Window rect too small: {w}x{h}')
+        return None
+
+    SRCCOPY = 0x00CC0020
+    gdi32 = ctypes.windll.gdi32
+    hdc_screen = user32.GetDC(0)
+    hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+    hbm = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
+    gdi32.SelectObject(hdc_mem, hbm)
+    gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, left, top, SRCCOPY)
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [
+            ("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
+            ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
+            ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+            ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+            ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
+            ("biClrImportant", wintypes.DWORD),
+        ]
+
+    bmi = BITMAPINFOHEADER()
+    bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    bmi.biWidth = w
+    bmi.biHeight = -h  # top-down
+    bmi.biPlanes = 1
+    bmi.biBitCount = 32
+    bmi.biCompression = 0
+    buf = (ctypes.c_ubyte * (w * h * 4))()
+    gdi32.GetDIBits(hdc_mem, hbm, 0, h, buf, ctypes.byref(bmi), 0)
+    gdi32.DeleteObject(hbm)
+    gdi32.DeleteDC(hdc_mem)
+    user32.ReleaseDC(0, hdc_screen)
+
+    img = Image.frombytes('RGBA', (w, h), bytes(buf), 'raw', 'BGRA').convert('RGB')
+    out = io.BytesIO()
+    img.save(out, 'PNG')
+    return out.getvalue()
+
+def push_qr_screenshot(reason):
+    """Capture current WeChat window and push it via Node server (both channels).
+    Cooldown-limited; safe to call from any recover branch."""
+    global _LAST_QR_PUSH
+    now = time.time()
+    if now - _LAST_QR_PUSH < QR_PUSH_COOLDOWN:
+        log.info('[qr] Push cooldown active, skipping screenshot push')
+        return
+    try:
+        import ctypes, win32gui, win32con
+        from wx4py.core.win32 import find_wechat_window
+        hwnd = find_wechat_window()
+        if not hwnd:
+            log.info('[qr] No WeChat window to capture')
+            return
+        # Bring to front so BitBlt captures real pixels (VNC daemon keeps desktop alive)
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        time.sleep(0.3)
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+        time.sleep(0.8)
+
+        png = _capture_window_png(hwnd)
+        if not png:
+            log.warning('[qr] Capture failed')
+            return
+
+        cfg = _read_env_cfg()
+        port = cfg.get('PORT', '3000')
+        secret = cfg.get('QR_PUSH_SECRET', '')
+        import base64, urllib.request
+        body = json.dumps({
+            'secret': secret,
+            'image': base64.b64encode(png).decode(),
+            'reason': reason,
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            f'http://127.0.0.1:{port}/api/qr-notify',
+            data=body, headers={'Content-Type': 'application/json'},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            r = json.loads(resp.read().decode('utf-8'))
+        if r.get('ok'):
+            _LAST_QR_PUSH = now
+            log.info(f"[qr] QR screenshot pushed → {r.get('url')}")
+        else:
+            log.warning(f'[qr] Push rejected: {r}')
+    except Exception as e:
+        log.warning(f'[qr] Push failed: {e}')
+
 def try_auto_recover():
     """Auto-recovery: reconnect wx4py if needed, then handle login page."""
     global _wx, LAST_RECOVER_ACTION
@@ -467,6 +597,9 @@ def try_auto_recover():
 
             if not login_elem:
                 log.info('[recover] UIA didn\'t find login button, skipping')
+                # No login button and not on main window — likely already showing
+                # the QR code window (e.g. clicked in a previous cycle). Push it.
+                push_qr_screenshot('微信显示扫码登录窗口，请尽快扫码')
             else:
                 br = login_elem.CurrentBoundingRectangle
                 btn_cx = (br.left + br.right) // 2
@@ -532,6 +665,9 @@ def try_auto_recover():
                 except Exception:
                     pass
             log.warning('[recover] Timed out waiting for main window after successful click')
+            # Clicked "进入微信" but no main window — WeChat is showing the QR
+            # code (or phone-confirm page). Screenshot it and push to both channels.
+            push_qr_screenshot('已自动点击"进入微信"，微信要求扫码确认，请尽快扫码')
 
         # ── Step 6: no longer needed — VNC daemon keeps desktop active, coordinate clicks work.
         # This step is intentionally empty.
