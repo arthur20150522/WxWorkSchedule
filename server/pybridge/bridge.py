@@ -137,15 +137,23 @@ def soft_rebind_uia():
         return {**result, 'ok': False, 'error': str(e)}
 
 def _is_main_window(hwnd):
-    """Check if hwnd is WeChat main window (> 30 UIA elements, login page has < 25)."""
+    """True only for the real MAIN window. Login/QR windows can exceed 30 nodes
+    (login page ~27 + popup dialog ~9 = 36), so exclude known login markers first."""
     try:
         import pythoncom; pythoncom.CoInitialize()
         import comtypes.client as cc
         import comtypes.gen.UIAutomationClient as UIA
         uia = cc.CreateObject('{ff48dba4-60ef-4201-aa87-54103eef594e}', interface=UIA.IUIAutomation)
         elem = uia.ElementFromHandle(hwnd)
-        count = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition()).Length
-        return count > 30
+        all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
+        login_names = {'我知道了', '进入微信', '登录', '切换账号', '仅传输文件', '为了你的账号安全，请重新登录。'}
+        for i in range(all_e.Length):
+            e = all_e.GetElement(i)
+            n = (e.CurrentName or '').strip()
+            c = e.CurrentClassName or ''
+            if n in login_names or 'LoginWindow' in c:
+                return False
+        return all_e.Length > 30
     except Exception:
         return False
 
@@ -385,6 +393,7 @@ def try_auto_recover():
     global _wx, LAST_RECOVER_ACTION
     try:
         import ctypes, win32gui, win32con, time
+        from wx4py.core.win32 import find_wechat_window  # hoisted: Step 0 uses it even when Step -1 skips its own import
 
         # Cooldown: if we did recovery action in last 10min, skip to avoid re-triggering
         if time.time() - LAST_RECOVER_ACTION < 600:
@@ -599,7 +608,17 @@ def try_auto_recover():
                 log.info('[recover] UIA didn\'t find login button, skipping')
                 # No login button and not on main window — likely already showing
                 # the QR code window (e.g. clicked in a previous cycle). Push it.
-                push_qr_screenshot('微信显示扫码登录窗口，请尽快扫码')
+                # Guard: skip if main-window markers present (stray popup after login).
+                has_main_marker = False
+                for i in range(all_e.Length):
+                    e = all_e.GetElement(i)
+                    n = (e.CurrentName or '').strip()
+                    c = e.CurrentClassName or ''
+                    if n == '搜索' or 'ChatInputField' in c:
+                        has_main_marker = True
+                        break
+                if not has_main_marker:
+                    push_qr_screenshot('微信显示扫码登录窗口，请尽快扫码')
             else:
                 br = login_elem.CurrentBoundingRectangle
                 btn_cx = (br.left + br.right) // 2
