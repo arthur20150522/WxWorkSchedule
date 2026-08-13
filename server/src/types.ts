@@ -84,6 +84,8 @@ export interface Data {
   logs: Log[];
   liveLogs: LiveLog[];
   wechatSchedule?: WeChatSchedule;
+  /** One-shot legacy migration marker — prevents deleted tasks from resurrecting on every restart */
+  legacyMigrated?: boolean;
 }
 
 // ── Bot Status (API 返回) ────────────────────────────────

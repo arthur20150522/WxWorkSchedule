@@ -83,10 +83,20 @@ export async function getDb(): Promise<Low<Data>> {
 }
 
 async function migrateFromLegacy(db: Low<Data>): Promise<void> {
-  const usersDir = path.resolve(process.cwd(), 'users');
-  if (!fs.existsSync(usersDir)) return;
+  // One-shot migration: once marked done, NEVER re-import. Re-importing on
+  // every startup resurrected tasks the user had deleted (legacy tasks carry
+  // ancient scheduleTimes and would fire again right after each deployment).
+  if (db.data.legacyMigrated) return;
 
-  console.log('[DB] Detected legacy users/ directory, migrating...');
+  const usersDir = path.resolve(process.cwd(), 'users');
+  if (!fs.existsSync(usersDir)) {
+    // Nothing to migrate — mark done so we never check again
+    db.data.legacyMigrated = true;
+    await db.write();
+    return;
+  }
+
+  console.log('[DB] Detected legacy users/ directory, migrating (one-shot)...');
 
   try {
     const userDirs = fs.readdirSync(usersDir);
@@ -124,6 +134,8 @@ async function migrateFromLegacy(db: Low<Data>): Promise<void> {
       }
     }
 
+    // One-shot: mark done BEFORE writing so a crash can never cause a re-import
+    db.data.legacyMigrated = true;
     await db.write();
     console.log(`[DB] Migration complete: ${migratedTasks} tasks, ${migratedTemplates} templates`);
     console.log('[DB] Legacy users/ directory kept for safety — you can delete it manually');
