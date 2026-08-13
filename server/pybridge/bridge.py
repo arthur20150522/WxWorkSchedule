@@ -258,9 +258,14 @@ LAST_RECOVER_ACTION = 0      # timestamp of last recovery action (cooldown)
 HARD_RECOVER_COOLDOWN = 0    # separate cooldown for hard recovery (prevent kill loops)
 _recover_lock = threading.Lock()  # prevent concurrent recovery threads
 
-# ── QR login screenshot push ──────────────────────────────────────────
-QR_PUSH_COOLDOWN = 900       # at most one QR push per 15min
-_LAST_QR_PUSH = 0
+# ── QR live stream ────────────────────────────────────────────────────
+# While WeChat shows the QR login window, capture & upload one frame every
+# QR_STREAM_INTERVAL s. Node hosts a live page; the offline notice (pushed
+# once by botManager with a 30min cooldown) points to that page.
+QR_STREAM_INTERVAL = 30      # seconds between frames (QR refreshes ~every 2min)
+_qr_stream_stop = threading.Event()
+_qr_stream_thread = None
+_qr_stream_lock = threading.Lock()
 
 def _read_env_cfg():
     """Read server/.env (../.env relative to this file) → dict."""
@@ -339,54 +344,83 @@ def _capture_window_png(hwnd):
     img.save(out, 'PNG')
     return out.getvalue()
 
-def push_qr_screenshot(reason):
-    """Capture current WeChat window and push it via Node server (both channels).
-    Cooldown-limited; safe to call from any recover branch."""
-    global _LAST_QR_PUSH
-    now = time.time()
-    if now - _LAST_QR_PUSH < QR_PUSH_COOLDOWN:
-        log.info('[qr] Push cooldown active, skipping screenshot push')
-        return
+def _qr_upload_frame(png):
+    """Upload one PNG frame to the Node server (localhost). Returns resp dict."""
+    import base64, urllib.request
+    cfg = _read_env_cfg()
+    port = cfg.get('PORT', '3000')
+    secret = cfg.get('QR_PUSH_SECRET', '')
+    body = json.dumps({
+        'secret': secret,
+        'image': base64.b64encode(png).decode(),
+    }).encode('utf-8')
+    req = urllib.request.Request(
+        f'http://127.0.0.1:{port}/api/qr/live',
+        data=body, headers={'Content-Type': 'application/json'},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode('utf-8'))
+
+def _qr_stream_worker():
+    """Capture the WeChat window every QR_STREAM_INTERVAL s until stopped."""
+    import ctypes, win32gui, win32con
+    from wx4py.core.win32 import find_wechat_window
+    while not _qr_stream_stop.is_set():
+        try:
+            hwnd = find_wechat_window()
+            if not hwnd:
+                log.info('[qr-stream] No WeChat window, retrying next tick')
+            else:
+                # Bring to front so BitBlt captures real pixels (VNC daemon keeps desktop alive)
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                time.sleep(0.3)
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+                time.sleep(0.8)
+                png = _capture_window_png(hwnd)
+                if png:
+                    r = _qr_upload_frame(png)
+                    log.info(f"[qr-stream] frame uploaded → {r.get('url', '?')}")
+                else:
+                    log.warning('[qr-stream] Capture failed, retrying next tick')
+        except Exception as e:
+            log.warning(f'[qr-stream] Upload failed: {e}')
+        _qr_stream_stop.wait(QR_STREAM_INTERVAL)
+
+def start_qr_stream():
+    """Start the live QR screenshot stream (idempotent)."""
+    global _qr_stream_thread
+    with _qr_stream_lock:
+        if _qr_stream_thread and _qr_stream_thread.is_alive():
+            return
+        _qr_stream_stop.clear()
+        _qr_stream_thread = threading.Thread(target=_qr_stream_worker, daemon=True)
+        _qr_stream_thread.start()
+        log.info(f'[qr-stream] Live stream started ({QR_STREAM_INTERVAL}s/frame)')
+
+def stop_qr_stream():
+    """Stop the stream and tell Node to revoke the live page (WeChat recovered)."""
+    global _qr_stream_thread
+    with _qr_stream_lock:
+        _qr_stream_stop.set()
+        if _qr_stream_thread:
+            _qr_stream_thread.join(timeout=10)
+        _qr_stream_thread = None
+        _qr_stream_stop.clear()
     try:
-        import ctypes, win32gui, win32con
-        from wx4py.core.win32 import find_wechat_window
-        hwnd = find_wechat_window()
-        if not hwnd:
-            log.info('[qr] No WeChat window to capture')
-            return
-        # Bring to front so BitBlt captures real pixels (VNC daemon keeps desktop alive)
-        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        time.sleep(0.3)
-        ctypes.windll.user32.SetForegroundWindow(hwnd)
-        time.sleep(0.8)
-
-        png = _capture_window_png(hwnd)
-        if not png:
-            log.warning('[qr] Capture failed')
-            return
-
+        import urllib.request
         cfg = _read_env_cfg()
         port = cfg.get('PORT', '3000')
         secret = cfg.get('QR_PUSH_SECRET', '')
-        import base64, urllib.request
-        body = json.dumps({
-            'secret': secret,
-            'image': base64.b64encode(png).decode(),
-            'reason': reason,
-        }).encode('utf-8')
+        body = json.dumps({'secret': secret}).encode('utf-8')
         req = urllib.request.Request(
-            f'http://127.0.0.1:{port}/api/qr-notify',
+            f'http://127.0.0.1:{port}/api/qr/clear',
             data=body, headers={'Content-Type': 'application/json'},
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            r = json.loads(resp.read().decode('utf-8'))
-        if r.get('ok'):
-            _LAST_QR_PUSH = now
-            log.info(f"[qr] QR screenshot pushed → {r.get('url')}")
-        else:
-            log.warning(f'[qr] Push rejected: {r}')
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+        log.info('[qr-stream] Live stream stopped, page revoked')
     except Exception as e:
-        log.warning(f'[qr] Push failed: {e}')
+        log.warning(f'[qr-stream] Stop/clear notification failed: {e}')
 
 def try_auto_recover():
     """Auto-recovery: reconnect wx4py if needed, then handle login page."""
@@ -497,6 +531,7 @@ def try_auto_recover():
                 hwnd_quick = wx._window.hwnd if hasattr(wx, '_window') else 0
                 # Verify hwnd is still alive (not a zombie from killed WeChat)
                 if hwnd_quick and win32gui.IsWindow(hwnd_quick) and _is_main_window(hwnd_quick):
+                    stop_qr_stream()  # already healthy — make sure no stream lingers
                     return  # healthy — skip recovery
         except Exception:
             pass
@@ -618,7 +653,7 @@ def try_auto_recover():
                         has_main_marker = True
                         break
                 if not has_main_marker:
-                    push_qr_screenshot('微信显示扫码登录窗口，请尽快扫码')
+                    start_qr_stream()  # QR login window is up — stream it live
             else:
                 br = login_elem.CurrentBoundingRectangle
                 btn_cx = (br.left + br.right) // 2
@@ -669,6 +704,7 @@ def try_auto_recover():
                     hwnd = find_wechat_window()
                     if hwnd and _is_main_window(hwnd):
                         log.info(f'[recover] Main window appeared: HWND={hwnd}')
+                        stop_qr_stream()  # back online — revoke live page
                         if _wx is not None:
                             try:
                                 _wx.disconnect()
@@ -685,8 +721,8 @@ def try_auto_recover():
                     pass
             log.warning('[recover] Timed out waiting for main window after successful click')
             # Clicked "进入微信" but no main window — WeChat is showing the QR
-            # code (or phone-confirm page). Screenshot it and push to both channels.
-            push_qr_screenshot('已自动点击"进入微信"，微信要求扫码确认，请尽快扫码')
+            # code (or phone-confirm page). Stream it live.
+            start_qr_stream()
 
         # ── Step 6: no longer needed — VNC daemon keeps desktop active, coordinate clicks work.
         # This step is intentionally empty.

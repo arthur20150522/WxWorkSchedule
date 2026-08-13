@@ -197,6 +197,22 @@ metadata:
 
 ---
 
+## 2026-08-13 操作日志
+
+### 16:00 — 掉线通知改版：静态截图推送 → 实时二维码页面（一次通知，不再轰炸）
+
+- **背景** 老板反馈"一直收到推送"：①QR 截图推送每 15min 一条直到扫码（冷却在 bridge 进程内存，重启即清零）②HealthMonitor 恢复推送无冷却 ③掉线→自动重登→再掉线振荡时成对轰炸。且静态截图会过期，手机收到的图可能已失效
+- **方案** 掉线后 bridge 持续截图上传（4s/帧）→ Node 托管 HTML 实时页面轮询刷新 → 掉线通知只推一次（30min 冷却）指向页面；微信恢复即销毁页面
+- **feat** `server/src/qrRelay.ts` 重写 — `POST /api/qr/live`（帧上传，secret 校验，覆盖写 `live-<token>.png`）+ `POST /api/qr/clear`（恢复即撤销）+ `GET /api/qr/view/:token`（移动端自适应 HTML，JS 每 4s 轮询刷新，>110s 无更新提示过期）+ `GET /api/qr/live/:token.png` + 5min 无帧自动过期清理 + 导出 `getQrViewUrl()`；删除旧 `/api/qr-notify` 单次截图接口；token 即凭证（32hex），重启/clear 后旧 URL 全失效
+- **feat** `server/src/botManager.ts` — 掉线通知加 `KICK_PUSH_COOLDOWN_MS=30min` 冷却 + 文案带实时页面链接；**删除"微信已恢复"推送**（一次掉线通知足够，页面随帧停止自动失效）
+- **feat** `server/pybridge/bridge.py` — 删 `push_qr_screenshot()`，新增 `_qr_upload_frame()` / `_qr_stream_worker()` / `start_qr_stream()` / `stop_qr_stream()`（4s/帧截图上传，stop 时 POST /api/qr/clear）；触发点：①UIA 找不到登录按钮（二维码已显示）②点完"进入微信"8s 无主界面；停止点：Step 1 健康跳过 + Step 5 主窗口出现
+- **验证** server `tsc --noEmit` ✅ / bridge.py `py_compile` ✅（SyntaxWarning 为既有代码）
+- **调整** ①截图频率 4s → **30s**（二维码 ~2min 刷新一次，30s 帧足够且省资源）②`registerQrRoutes` 加**启动清理**——Node 每次启动先清空 `data/qr/` 残留（进程重启后旧 token 文件不可达，避免服务器硬盘堆积）
+- **磁盘占用**：帧上传是**覆盖写**（磁盘恒为 1 个文件 ~12KB）；删除时机：微信恢复（`/api/qr/clear` 立即删）、5min 无帧自动过期、Node 重启清空 — 三保险
+- **注意** 部署后 `.env` 无需改动（复用既有 QR_PUSH_SECRET）；新页面 URL 形如 `https://wechat.eastpolar.top/api/qr/view/<32hex>`
+
+---
+
 ## 待办
 
 | P | 任务 |
