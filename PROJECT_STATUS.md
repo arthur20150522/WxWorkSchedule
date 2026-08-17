@@ -211,6 +211,31 @@ metadata:
 - **磁盘占用**：帧上传是**覆盖写**（磁盘恒为 1 个文件 ~12KB）；删除时机：微信恢复（`/api/qr/clear` 立即删）、5min 无帧自动过期、Node 重启清空 — 三保险
 - **注意** 部署后 `.env` 无需改动（复用既有 QR_PUSH_SECRET）；新页面 URL 形如 `https://wechat.eastpolar.top/api/qr/view/<32hex>`
 
+### 15:47 — 🔥 修复：部署重启复活历史任务（旧数据迁移缺少一次性标记）
+
+- **事故** 老板反馈"重新部署又把历史任务拉进来了"——微信群里被 6 月旧任务（凌阿姨/大萝卜/罗小姐营养私教等）刷屏"喝水打卡/下午茶"
+- **证据** 远程 pm2 日志三次重启均出现 `[DB] Detected legacy users/ directory, migrating...`（31/31/28 tasks）→ 6 月旧任务被反复导入 → 调度器把超期周期任务推进到"今天"的时段直接发送
+- **根因** `server/src/dbManager.ts` 的 `migrateFromLegacy()` 没有一次性标记——`legacyMigrated` 修复已写好但**一直未提交推送**，远程跑的是旧代码，每次 pm2 重启都重新导入 `users/*/db.json`
+- **修复** commit `c68fa7a`：`legacyMigrated` 标记在两条路径都落库（无 legacy 目录时 + 迁移成功后，先设标记再 `db.write()`）；`types.ts` 加 `legacyMigrated?: boolean`
+- **远程清理** `pm2 stop` → 备份 `server/db.json.bak-20260813` → 删除 3 条复活任务（1780138233678/1780138233800/1780175729730，助理提示群+白龙的 6 月旧版重复任务）→ db.json 写入 `legacyMigrated: true` → pull c68fa7a + tsc + pm2 restart
+- **验证** 重启日志无 migration 行、无 overdue 推进刷屏、调度器正常 ✅；db.json 剩 16 条任务全部为当前任务 ✅
+- **遗留** ①远程 `server/users_legacy_backup/`（已改名，代码只查 `users`，且标记已设——双重保险不会再导入，可手动删除）②`initDB` 里 `processing → pending` 崩溃恢复逻辑：若消息已发出但状态未落库，重启后可能重发一次（本次事故无关，属已知残余风险）
+- **教训** ⚠️ 本地写完修复必须 commit + push 才算数，否则"已修复"的 bug 会在下次部署时再次爆发
+
+---
+
+## 2026-08-17 操作日志
+
+### — QR live 页图片 404 修复
+
+- **事故** 老板点击推送链接后二维码不显示（"无权限"观感）——live 页框架能开但图永远加载失败
+- **证据** 公网实测：view 页 200 / 图片 404；页面源码 `imgBase='/api/qr/live/'+token+'.png'`
+- **根因** `qrRelay.ts` 图片路由：URL 路径段已含 `live`，`:file` 参数实为 `<token>.png`（不带前缀），但代码拿它跟磁盘名 `live-<token>.png` 比较且 sendFile 直接用参数值 → 永远 404。第一次修复（84ed3d7）误把正则改成要求 `live-` 前缀，属误诊
+- **修复** commit `af4659f`：参数正则 `^([a-f0-9]{32})\.png$` 提取 token 与 liveToken 比对，sendFile 拼 `live-${token}.png`；顺带 `/view` 过期/无效 token 返回友好 HTML"链接已失效"页替代空白 404
+- **验证** 重启后新会话：view 页 200 ✅ / live 图 200（11984B）✅ / 下载目检为清晰"扫码登录"二维码 ✅
+- **发现（未修）** 鸿蒙 MeoW 推送持续失败 `[Push:鸿蒙] Error: Unexpected token < in JSON at position 0` — API 返回 HTML 错误页，待排查
+- **自我批评** 第一次修复犯了模式匹配错误（看到正则就改正则），没先追 URL 构造链路；证据归因法对自家代码同样适用
+
 ---
 
 ## 待办
