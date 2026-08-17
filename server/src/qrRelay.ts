@@ -159,7 +159,18 @@ export function registerQrRoutes(app: express.Express): void {
   app.get('/api/qr/view/:token', (req, res) => {
     const token = req.params.token;
     if (!/^[a-f0-9]{32}$/.test(token) || token !== liveToken) {
-      return res.status(404).end();
+      // Friendly expiry page instead of empty 404 (browsers show cryptic errors otherwise)
+      res.status(404).type('html').send(
+        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">' +
+        '<meta name="viewport" content="width=device-width,initial-scale=1"><title>链接已失效</title></head>' +
+        '<body style="margin:0;background:#16181d;color:#eee;font-family:sans-serif;display:flex;' +
+        'flex-direction:column;align-items:center;justify-content:center;min-height:100vh">' +
+        '<h1 style="font-size:18px">链接已失效</h1>' +
+        '<p style="font-size:13px;color:#9aa0a6;padding:0 24px;text-align:center">' +
+        '二维码会话已结束（微信已恢复登录，或链接已过期）。<br>如微信仍未登录，请等待下一次掉线推送的新链接。</p>' +
+        '</body></html>',
+      );
+      return;
     }
     res.setHeader('Cache-Control', 'no-store');
     res.type('html').send(viewPageHtml(token));
@@ -168,7 +179,8 @@ export function registerQrRoutes(app: express.Express): void {
   // Latest live frame — no auth: same token credential.
   app.get('/api/qr/live/:file', (req, res) => {
     const file = req.params.file;
-    if (!/^[a-f0-9]{32}\.png$/.test(file) || file !== `live-${liveToken}.png`) {
+    // file includes the "live-" prefix — regex must account for it
+    if (!/^live-[a-f0-9]{32}\.png$/.test(file) || file !== `live-${liveToken}.png`) {
       return res.status(404).end();
     }
     res.setHeader('Cache-Control', 'no-store');
