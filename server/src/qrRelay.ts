@@ -177,14 +177,16 @@ export function registerQrRoutes(app: express.Express): void {
   });
 
   // Latest live frame — no auth: same token credential.
+  // URL: /api/qr/live/<token>.png → :file is "<token>.png" (the "live-" prefix
+  // only exists in the DISK filename live-<token>.png, not in the route param!)
   app.get('/api/qr/live/:file', (req, res) => {
     const file = req.params.file;
-    // file includes the "live-" prefix — regex must account for it
-    if (!/^live-[a-f0-9]{32}\.png$/.test(file) || file !== `live-${liveToken}.png`) {
+    const m = /^([a-f0-9]{32})\.png$/.exec(file);
+    if (!m || m[1] !== liveToken) {
       return res.status(404).end();
     }
     res.setHeader('Cache-Control', 'no-store');
-    res.sendFile(join(QR_DIR, file), (err) => {
+    res.sendFile(join(QR_DIR, `live-${m[1]}.png`), (err) => {
       if (err && !res.headersSent) res.status(404).end();
     });
   });
