@@ -233,7 +233,7 @@ metadata:
 - **根因** `qrRelay.ts` 图片路由：URL 路径段已含 `live`，`:file` 参数实为 `<token>.png`（不带前缀），但代码拿它跟磁盘名 `live-<token>.png` 比较且 sendFile 直接用参数值 → 永远 404。第一次修复（84ed3d7）误把正则改成要求 `live-` 前缀，属误诊
 - **修复** commit `af4659f`：参数正则 `^([a-f0-9]{32})\.png$` 提取 token 与 liveToken 比对，sendFile 拼 `live-${token}.png`；顺带 `/view` 过期/无效 token 返回友好 HTML"链接已失效"页替代空白 404
 - **验证** 重启后新会话：view 页 200 ✅ / live 图 200（11984B）✅ / 下载目检为清晰"扫码登录"二维码 ✅
-- **发现（未修）** 鸿蒙 MeoW 推送持续失败 `[Push:鸿蒙] Error: Unexpected token < in JSON at position 0` — API 返回 HTML 错误页，待排查
+- **鸿蒙 MeoW 推送故障（已自愈）** 当日约半天 `[Push:鸿蒙] Error: Unexpected token <`（接口返回 HTML 错误页）连续失败 ×10；同日稍后双侧（本地+服务器）实测恢复 200 → 属 MeoW 服务端临时故障，未改代码。同期安卓 Server酱 正常（"微信掉线"通知 ×4 成功）。用户扫码后 deep-health 恢复 `ok / 主界面已就绪` ✅
 - **自我批评** 第一次修复犯了模式匹配错误（看到正则就改正则），没先追 URL 构造链路；证据归因法对自家代码同样适用
 
 ---
