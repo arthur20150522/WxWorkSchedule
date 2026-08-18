@@ -1,42 +1,54 @@
 /**
- * Unified push notification — 推送到所有设备（鸿蒙 ChuckFang + 安卓微信 Server酱）.
+ * Unified push notification — 推送到所有设备（鸿蒙 ChuckFang/MeoW + 安卓微信 Server酱）.
+ *
+ * linkUrl: 可选跳转链接。Server酱 渲染为 markdown 可点击链接；
+ * MeoW 优先走 msgType=html 的 <a> 可点击链接，失败时降级纯文本 GET（URL 以文字形式附带）。
+ *
+ * MeoW 服务端观察（2026-08-17）：POST 接口故障期返回 500/HTML 错误页，
+ * 此时 resp.json() 抛 "Unexpected token <" —— 降级逻辑保证纯文本通道仍可达。
  */
 
 const CHUCKFANG_URL = 'https://api.chuckfang.com/eastpolar';
 const SERVERJIANG_URL = 'https://17791.push.ft07.com/send/sctp17791t3thcbychibuxsxemwtxzwo.send';
 const PUSH_ENABLED = true;
 
-async function pushChuckFang(title: string, message: string, imageUrl?: string): Promise<boolean> {
-  try {
-    // With image: POST msgType=html so the App renders <img> inline (per MeoW API doc).
-    if (imageUrl) {
-      const url = `${CHUCKFANG_URL}?msgType=html&htmlHeight=480`;
+async function pushChuckFang(title: string, message: string, linkUrl?: string): Promise<boolean> {
+  // 1) Preferred: html mode with a clickable <a> (needs POST — broken during MeoW outages)
+  if (linkUrl) {
+    try {
       const body = JSON.stringify({
         title,
-        msg: `<p>${message}</p><img src="${imageUrl}" style="max-width:100%;border-radius:8px"/>`,
-        url: imageUrl,
+        msg: `<p>${message}</p><p><a href="${linkUrl}">👉 点击查看实时二维码</a></p>`,
+        url: linkUrl,
       });
-      const resp = await fetch(url, {
+      const resp = await fetch(`${CHUCKFANG_URL}?msgType=html&htmlHeight=300`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
         body,
       });
-      const result = await resp.json() as { status: number; message?: string };
+      const result = await resp.json() as { status: number; msg?: string };
       if (result.status === 200) {
-        console.log(`[Push:鸿蒙] ${title} (with image)`);
+        console.log(`[Push:鸿蒙] ${title} (html link)`);
         return true;
       }
-      console.warn(`[Push:鸿蒙] Image push failed (${result.status}): ${result.message}`);
-      return false;
+      console.warn(`[Push:鸿蒙] html push failed (${result.status}): ${result.msg}`);
+    } catch (e) {
+      console.error('[Push:鸿蒙] html push error:', (e as Error).message);
     }
-    const url = `${CHUCKFANG_URL}/${encodeURIComponent(title)}/${encodeURIComponent(message)}`;
+    // fall through to text fallback
+  }
+
+  // 2) Fallback: plain-text GET (most reliable path; MeoW app shows URL as text)
+  try {
+    const text = linkUrl ? `${message}\n${linkUrl}` : message;
+    const url = `${CHUCKFANG_URL}/${encodeURIComponent(title)}/${encodeURIComponent(text)}`;
     const resp = await fetch(url);
-    const result = await resp.json() as { status: number; message?: string };
+    const result = await resp.json() as { status: number; msg?: string };
     if (result.status === 200) {
-      console.log(`[Push:鸿蒙] ${title}`);
+      console.log(`[Push:鸿蒙] ${title}${linkUrl ? ' (text fallback)' : ''}`);
       return true;
     }
-    console.warn(`[Push:鸿蒙] Failed (${result.status}): ${result.message}`);
+    console.warn(`[Push:鸿蒙] Failed (${result.status}): ${result.msg}`);
     return false;
   } catch (e) {
     console.error('[Push:鸿蒙] Error:', (e as Error).message);
@@ -44,12 +56,11 @@ async function pushChuckFang(title: string, message: string, imageUrl?: string):
   }
 }
 
-async function pushServerJiang(title: string, message: string, imageUrl?: string): Promise<boolean> {
+async function pushServerJiang(title: string, message: string, linkUrl?: string): Promise<boolean> {
   try {
-    // Server酱 Turbo: desp supports markdown; image must be an external https URL.
-    // Plain URL appended as fallback so it's tappable even if image rendering fails.
-    const desp = imageUrl
-      ? `${message}\n\n![二维码](${imageUrl})\n\n[点我查看二维码](${imageUrl})`
+    // Server酱 Turbo: desp supports markdown — render a clickable link.
+    const desp = linkUrl
+      ? `${message}\n\n[👉 点击查看实时二维码（页面自动刷新）](${linkUrl})\n\n${linkUrl}`
       : message;
     const body = JSON.stringify({ title, desp });
     const resp = await fetch(SERVERJIANG_URL, {
@@ -70,11 +81,11 @@ async function pushServerJiang(title: string, message: string, imageUrl?: string
   }
 }
 
-export async function pushNotify(title: string, message: string, imageUrl?: string): Promise<void> {
+export async function pushNotify(title: string, message: string, linkUrl?: string): Promise<void> {
   if (!PUSH_ENABLED) return;
   // Fire both in parallel
   await Promise.allSettled([
-    pushChuckFang(title, message, imageUrl),
-    pushServerJiang(title, message, imageUrl),
+    pushChuckFang(title, message, linkUrl),
+    pushServerJiang(title, message, linkUrl),
   ]);
 }

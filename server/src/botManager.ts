@@ -56,7 +56,7 @@ export const BotManager = {
             const now = Date.now();
             if (now - lastKickPushTs >= KICK_PUSH_COOLDOWN_MS) {
               lastKickPushTs = now;
-              pushNotify('微信掉线', `原因: ${res.reason}\n\n👉 点击查看实时二维码（扫码即恢复）：${getQrViewUrl()}`);
+              pushNotify('微信掉线', `原因: ${res.reason}。二维码页面会自动刷新，扫码即恢复`, getQrViewUrl());
             }
           }
         } else if (!wasOnline && res.ok) {

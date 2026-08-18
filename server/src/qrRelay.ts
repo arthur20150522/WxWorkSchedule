@@ -34,6 +34,9 @@ const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || 'https://wechat.eastpolar.to
 // ── Live-stream state (in-memory; restart regenerates the token, old URLs die) ──
 let liveToken: string | null = null;
 let liveLastUpdate = 0;
+// Why the previous session ended — lets a dead link explain itself precisely
+let lastClearedToken: string | null = null;
+let lastClearReason: 'recovered' | 'expired' | null = null;
 
 function getOrCreateLiveToken(): string {
   if (!liveToken) liveToken = randomBytes(16).toString('hex');
@@ -44,13 +47,25 @@ function liveFilePath(): string {
   return liveToken ? join(QR_DIR, `live-${liveToken}.png`) : '';
 }
 
-function clearLive(): void {
+function clearLive(reason: 'recovered' | 'expired'): void {
   const f = liveFilePath();
   if (f && existsSync(f)) {
     try { unlinkSync(f); } catch { /* ignore */ }
   }
+  lastClearedToken = liveToken;
+  lastClearReason = reason;
   liveToken = null;
   liveLastUpdate = 0;
+}
+
+function deadLinkPageHtml(title: string, detail: string): string {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head>` +
+    `<body style="margin:0;background:#16181d;color:#eee;font-family:sans-serif;display:flex;` +
+    `flex-direction:column;align-items:center;justify-content:center;min-height:100vh">` +
+    `<h1 style="font-size:18px">${title}</h1>` +
+    `<p style="font-size:13px;color:#9aa0a6;padding:0 24px;text-align:center;line-height:1.8">${detail}</p>` +
+    `</body></html>`;
 }
 
 /** Public live-page URL — used by botManager for the single offline notice. */
@@ -112,7 +127,7 @@ export function registerQrRoutes(app: express.Express): void {
   setInterval(() => {
     if (liveToken && Date.now() - liveLastUpdate > LIVE_TTL_MS) {
       console.log('[QR] Live session expired (no frames) — clearing');
-      clearLive();
+      clearLive('expired');
     }
   }, 60_000).unref();
 
@@ -149,7 +164,7 @@ export function registerQrRoutes(app: express.Express): void {
       return res.status(403).json({ error: 'forbidden' });
     }
     if (liveToken) {
-      clearLive();
+      clearLive('recovered');
       console.log('[QR] Live session cleared (WeChat recovered)');
     }
     res.json({ ok: true });
@@ -159,17 +174,18 @@ export function registerQrRoutes(app: express.Express): void {
   app.get('/api/qr/view/:token', (req, res) => {
     const token = req.params.token;
     if (!/^[a-f0-9]{32}$/.test(token) || token !== liveToken) {
-      // Friendly expiry page instead of empty 404 (browsers show cryptic errors otherwise)
-      res.status(404).type('html').send(
-        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">' +
-        '<meta name="viewport" content="width=device-width,initial-scale=1"><title>链接已失效</title></head>' +
-        '<body style="margin:0;background:#16181d;color:#eee;font-family:sans-serif;display:flex;' +
-        'flex-direction:column;align-items:center;justify-content:center;min-height:100vh">' +
-        '<h1 style="font-size:18px">链接已失效</h1>' +
-        '<p style="font-size:13px;color:#9aa0a6;padding:0 24px;text-align:center">' +
-        '二维码会话已结束（微信已恢复登录，或链接已过期）。<br>如微信仍未登录，请等待下一次掉线推送的新链接。</p>' +
-        '</body></html>',
-      );
+      // Dead link — explain precisely WHY it died instead of a cryptic 404
+      if (token === lastClearedToken && lastClearReason === 'recovered') {
+        res.status(404).type('html').send(deadLinkPageHtml(
+          '微信已恢复，无需扫码 ✅',
+          '这个二维码链接在你扫码成功后已被服务器主动作废（安全设计）。<br>当前微信登录正常。',
+        ));
+      } else {
+        res.status(404).type('html').send(deadLinkPageHtml(
+          '链接已失效',
+          '二维码会话已结束（超过 5 分钟无刷新，或服务重启）。<br>如微信仍未登录，请等待下一次掉线推送的新链接。',
+        ));
+      }
       return;
     }
     res.setHeader('Cache-Control', 'no-store');
