@@ -58,22 +58,18 @@ async function pushChuckFang(title: string, message: string, linkUrl?: string): 
 
 async function pushServerJiang(title: string, message: string, linkUrl?: string): Promise<boolean> {
   try {
-    // Server酱 Turbo: desp supports markdown — render a clickable link.
+    // Server酱 SC3: 走 GET 查询参数 (?title=..&desp=..)，POST JSON 会被拒(403/1010)。
     const desp = linkUrl
       ? `${message}\n\n[👉 点击查看实时二维码（页面自动刷新）](${linkUrl})\n\n${linkUrl}`
       : message;
-    const body = JSON.stringify({ title, desp });
-    const resp = await fetch(SERVERJIANG_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      body,
-    });
-    const result = await resp.json() as { code: number; message?: string };
-    if (resp.status === 200 && result.code === 0) {
+    const url = `${SERVERJIANG_URL}?title=${encodeURIComponent(title)}&desp=${encodeURIComponent(desp)}`;
+    const resp = await fetch(url, { method: 'GET' });
+    const result = await resp.json() as { code?: number; errno?: number; message?: string };
+    if (resp.status === 200 && (result.code === 0 || result.errno === 0)) {
       console.log(`[Push:安卓] ${title}`);
       return true;
     }
-    console.warn(`[Push:安卓] Failed (code=${result.code}): ${result.message}`);
+    console.warn(`[Push:安卓] Failed (code=${result.code ?? result.errno}): ${result.message}`);
     return false;
   } catch (e) {
     console.error('[Push:安卓] Error:', (e as Error).message);
