@@ -56,3 +56,6 @@ deploy_log.txt
 ssh_test.txt
 bridge_check.txt
 .trae
+# probe/verification runtime data (group & member names)
+tools/at_*
+tools/remote_screen.png

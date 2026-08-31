@@ -16,7 +16,9 @@ LOG = r'C:\Users\Administrator\.pm2\logs\wx-bridge-error.log'
 BODY_PATH = r'C:\Users\Administrator\at_probe_body.json'
 RESULT_PATH = r'C:\Users\Administrator\at_probe_result.json'
 
-txt = io.open(LOG, encoding='utf-8', errors='replace').read()
+# bridge stderr is redirected by pm2 → encoded with the system locale (GBK on
+# Chinese Windows), not UTF-8. Read accordingly, else Chinese turns to U+FFFD.
+txt = io.open(LOG, encoding='gbk', errors='replace').read()
 matches = re.findall(r'\[send\] queued \[group\] (.*?): @', txt)
 if not matches:
     print('NO_AT_GROUP_FOUND')
