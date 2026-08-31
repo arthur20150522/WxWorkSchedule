@@ -120,11 +120,11 @@ export const t = {
     taskFailed: "失败",
     // 实时发送
     liveSendTitle: "实时发送消息",
-    liveSendDesc: "即时向指定对象发送消息，无需创建任务",
+    liveSendDesc: "即时向指定对象发送消息，无需创建任务；群聊消息中写 @昵称 可真正艾特成员",
     liveSendTarget: "发送对象",
     liveSendTargetPlaceholder: "输入联系人名或群名",
     liveSendContent: "消息内容",
-    liveSendContentPlaceholder: "输入要发送的消息...",
+    liveSendContentPlaceholder: "输入要发送的消息...（群聊中写 @昵称 即可艾特）",
     liveSendBtn: "立即发送",
     liveSendSending: "发送中...",
     liveSendSuccess: "发送成功",

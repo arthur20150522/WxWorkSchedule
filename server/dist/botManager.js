@@ -1,8 +1,13 @@
 import { wxBridge } from './wxBridge.js';
 import { pushNotify } from './pushNotify.js';
+import { getQrViewUrl } from './qrRelay.js';
 let online = false;
 let loginTime = null;
 let wasKickedNotified = false;
+// One offline notice per 30min max — prevents push bombing when the bot
+// flaps between offline/recovered across process restarts (in-memory only).
+let lastKickPushTs = 0;
+const KICK_PUSH_COOLDOWN_MS = 30 * 60 * 1000;
 export const BotManager = {
     async init() {
         try {
@@ -40,16 +45,21 @@ export const BotManager = {
                 online = res.ok;
                 if (wasOnline && !res.ok) {
                     console.warn(`[HealthMonitor] WeChat offline: ${res.reason}`);
-                    // Only push once per offline session
+                    // Push once per offline session, and at most once per 30min overall
                     if (!wasKickedNotified) {
-                        pushNotify('微信掉线', `原因: ${res.reason}`);
                         wasKickedNotified = true;
+                        const now = Date.now();
+                        if (now - lastKickPushTs >= KICK_PUSH_COOLDOWN_MS) {
+                            lastKickPushTs = now;
+                            pushNotify('微信掉线', `原因: ${res.reason}。二维码页面会自动刷新，扫码即恢复`, getQrViewUrl());
+                        }
                     }
                 }
                 else if (!wasOnline && res.ok) {
                     console.log('[HealthMonitor] WeChat recovered');
+                    // No recovery push — the single offline notice is enough; the QR
+                    // live page expires by itself once frames stop arriving.
                     wasKickedNotified = false;
-                    pushNotify('微信已恢复', '');
                 }
             }
             catch (e) {

@@ -6,13 +6,18 @@ Auto-recovers from 6am kick-off: detects login page, clicks "进入微信".
 import sys
 import json
 import logging
+import os
 import socket
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-logging.basicConfig(level=logging.INFO, format='[bridge] %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s.%(msecs)03d [bridge] %(message)s',
+    datefmt='%Y-%m-%dT%H:%M:%S',
+)
 log = logging.getLogger(__name__)
 
 # ── wx4py client (lazy init) ──────────────────────────────────────────
@@ -252,9 +257,10 @@ def _get_wechat_ui_node_count(hwnd):
 
 
 # ── Auto-recovery: detect login page and click "进入微信" ─────────────
-AUTO_RECOVER_ENABLED = True
+AUTO_RECOVER_ENABLED = os.environ.get('ALLOW_WECHAT_AUTO_RECOVERY') == 'true'
 AUTO_RECOVER_INTERVAL = 300  # check every 5min
 LAST_RECOVER_ACTION = 0      # timestamp of last recovery action (cooldown)
+HARD_RECOVER_ENABLED = os.environ.get('ALLOW_WECHAT_HARD_RECOVERY') == 'true'
 HARD_RECOVER_COOLDOWN = 0    # separate cooldown for hard recovery (prevent kill loops)
 _recover_lock = threading.Lock()  # prevent concurrent recovery threads
 
@@ -422,6 +428,137 @@ def stop_qr_stream():
     except Exception as e:
         log.warning(f'[qr-stream] Stop/clear notification failed: {e}')
 
+
+def _dismiss_wechat_update_prompt():
+    """Dismiss WeChat's update prompt without ever accepting an update."""
+    import ctypes
+    import pythoncom
+    import time
+    import win32gui
+    import comtypes.client as cc
+    import comtypes.gen.UIAutomationClient as UIA
+    from wx4py.core.win32 import find_wechat_window
+
+    pythoncom.CoInitialize()
+    candidates = []
+    primary_hwnd = find_wechat_window() or 0
+    if primary_hwnd:
+        candidates.append(primary_hwnd)
+
+    # WeChat can keep its main window and update window alive at the same
+    # time. find_wechat_window() may return either one, so inspect every
+    # visible top-level WeChat/Qt window instead of trusting the first HWND.
+    def _enum_candidate(hwnd, _):
+        try:
+            if not win32gui.IsWindowVisible(hwnd):
+                return
+            title = (win32gui.GetWindowText(hwnd) or '').strip()
+            class_name = win32gui.GetClassName(hwnd) or ''
+            if (title in ('\u5fae\u4fe1', 'WeChat') or '\u5fae\u4fe1' in title) and class_name.startswith('Qt'):
+                if hwnd not in candidates:
+                    candidates.append(hwnd)
+        except Exception:
+            pass
+
+    win32gui.EnumWindows(_enum_candidate, None)
+    if not candidates:
+        log.info('[recover] Update preflight found no candidate WeChat windows')
+        return False
+
+    uia = cc.CreateObject(
+        '{ff48dba4-60ef-4201-aa87-54103eef594e}',
+        interface=UIA.IUIAutomation,
+    )
+
+    def _scan(hwnd):
+        root = uia.ElementFromHandle(hwnd)
+        nodes = root.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
+        items = []
+        names = set()
+        classes = set()
+        for idx in range(nodes.Length):
+            node = nodes.GetElement(idx)
+            name = (node.CurrentName or '').strip()
+            class_name = node.CurrentClassName or ''
+            items.append((node, name, class_name))
+            if name:
+                names.add(name)
+            if class_name:
+                classes.add(class_name)
+        return items, names, classes
+
+    update_hwnd = 0
+    target = None
+    target_name = None
+    for candidate_hwnd in candidates:
+        try:
+            items, names, classes = _scan(candidate_hwnd)
+        except Exception as scan_err:
+            log.info(f'[recover] Update preflight scan failed hwnd={candidate_hwnd}: {scan_err}')
+            continue
+        has_new_version = any('\u65b0\u7248\u672c' in name for name in names)
+        has_update = any(name == '\u66f4\u65b0' for name in names)
+        has_ignore = any('\u5ffd\u7565\u672c\u6b21\u66f4\u65b0' in name for name in names)
+        is_update_prompt = (
+            has_new_version
+            and has_update
+            and ('mmui::UpdateWindow' in classes or has_ignore)
+        )
+        if not is_update_prompt:
+            if len(items) <= 30:
+                log.info(
+                    f'[recover] Update preflight did not match hwnd={candidate_hwnd}: '
+                    f'names={sorted(names)!r}, classes={sorted(classes)!r}'
+                )
+            continue
+        update_hwnd = candidate_hwnd
+        for preferred_name in ('\u5ffd\u7565\u672c\u6b21\u66f4\u65b0', '\u7a0d\u540e\u5904\u7406'):
+            for node, name, class_name in items:
+                if preferred_name in name and 'Button' in class_name:
+                    target = node
+                    target_name = preferred_name
+                    break
+            if target:
+                break
+        break
+
+    if not update_hwnd:
+        return False
+    if not target:
+        log.warning('[recover] Update prompt detected but no safe dismiss button was found')
+        return False
+
+    log.info(f'[recover] Update prompt detected; safely choosing "{target_name}"')
+    invoked = False
+    try:
+        pattern_obj = target.GetCurrentPattern(UIA.UIA_InvokePatternId)
+        if pattern_obj:
+            pattern_obj.QueryInterface(UIA.IUIAutomationInvokePattern).Invoke()
+            invoked = True
+    except Exception as invoke_err:
+        log.warning(f'[recover] Update dismiss InvokePattern failed: {invoke_err}')
+
+    time.sleep(1)
+    try:
+        _, names_after, _ = _scan(update_hwnd)
+    except Exception:
+        names_after = set()
+
+    # Some WeChat controls expose InvokePattern but ignore Invoke().  Only
+    # fall back to a coordinate click if the verified update prompt remains.
+    if any('\u65b0\u7248\u672c' in name for name in names_after):
+        br = target.CurrentBoundingRectangle
+        cx = (br.left + br.right) // 2
+        cy = (br.top + br.bottom) // 2
+        ctypes.windll.user32.SetCursorPos(cx, cy)
+        ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
+        time.sleep(0.03)
+        ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
+        log.info(f'[recover] Update dismiss coordinate fallback at ({cx},{cy})')
+
+    time.sleep(2)
+    return True
+
 def try_auto_recover():
     """Auto-recovery: reconnect wx4py if needed, then handle login page."""
     global _wx, LAST_RECOVER_ACTION
@@ -437,6 +574,15 @@ def try_auto_recover():
         if not _recover_lock.acquire(blocking=False):
             log.info('[recover] Another recovery already running, skipping...')
             return
+
+        # Handle a foreground update prompt before wx4py rebind/window
+        # selection can switch focus back to the obscured main window.
+        try:
+            if _dismiss_wechat_update_prompt():
+                LAST_RECOVER_ACTION = time.time()
+                stop_qr_stream()
+        except Exception as update_err:
+            log.warning(f'[recover] Update prompt handling failed: {update_err}')
 
         # ── Step -1: Detect stale wx4py session and soft-rebind (NO KILL) ──
         # Symptom: bridge.is_connected=True, HWND is current, but click/send
@@ -485,7 +631,12 @@ def try_auto_recover():
                 node_count = _get_wechat_ui_node_count(hwnd)
                 if 0 < node_count <= 3 and not _is_main_window(hwnd):
                     now = time.time()
-                    if now - HARD_RECOVER_COOLDOWN < 1800:  # max once per 30min
+                    if not HARD_RECOVER_ENABLED:
+                        log.warning(
+                            f'[recover] White screen candidate ({node_count} nodes); '
+                            'hard recovery disabled — leaving WeChat running'
+                        )
+                    elif now - HARD_RECOVER_COOLDOWN < 1800:  # max once per 30min
                         log.info(f'[recover] White screen ({node_count} nodes) but hard-recover cooldown active, skipping')
                     else:
                         log.info(f'[recover] White screen detected ({node_count} nodes) → triggering hard recovery (kill + relaunch)')
@@ -607,6 +758,40 @@ def try_auto_recover():
                     return hwnd_now and _is_main_window(hwnd_now)
                 except Exception:
                     return False
+
+            # A WeChat update prompt can become the foreground WeChat window
+            # immediately after login and hide the main UI from wx4py.  Dismiss
+            # only the non-updating choices; never click the update button.
+            update_dismissed = False
+            for dismiss_name in ('忽略本次更新', '稍后处理'):
+                for i in range(all_e.Length):
+                    e = all_e.GetElement(i)
+                    n = (e.CurrentName or '').strip()
+                    if n != dismiss_name:
+                        continue
+
+                    log.info(f'[recover] WeChat update prompt detected; dismissing with "{dismiss_name}"')
+                    invoked = False
+                    try:
+                        pattern_obj = e.GetCurrentPattern(UIA.UIA_InvokePatternId)
+                        if pattern_obj:
+                            pattern_obj.QueryInterface(UIA.IUIAutomationInvokePattern).Invoke()
+                            invoked = True
+                    except Exception as invoke_err:
+                        log.warning(f'[recover] Update dismiss InvokePattern failed: {invoke_err}')
+
+                    if not invoked:
+                        br = e.CurrentBoundingRectangle
+                        click_at((br.left + br.right) // 2, (br.top + br.bottom) // 2)
+
+                    update_dismissed = True
+                    time.sleep(2)
+                    hwnd = find_wechat_window() or hwnd
+                    elem = uia.ElementFromHandle(hwnd)
+                    all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
+                    break
+                if update_dismissed:
+                    break
 
             # Check for popup with "我知道了"
             for i in range(all_e.Length):
@@ -738,6 +923,9 @@ def try_auto_recover():
 
 def _auto_recover_loop():
     """Background thread: periodically check and recover."""
+    if not AUTO_RECOVER_ENABLED:
+        log.info('[recover] Background auto-recovery disabled; manual /recover remains available')
+        return
     log.info(f'[recover] Auto-recovery enabled, checking every {AUTO_RECOVER_INTERVAL}s')
     while AUTO_RECOVER_ENABLED:
         time.sleep(AUTO_RECOVER_INTERVAL)
@@ -745,6 +933,268 @@ def _auto_recover_loop():
             try_auto_recover()
         except Exception as e:
             log.error(f'[recover] Loop error: {e}')
+
+
+# ── @ mention send (group chats) ──────────────────────────────────────
+# A real WeChat mention can only be composed by typing "@" in the group chat
+# input: that pops up the member picker, and the picked member becomes a
+# highlighted token. Pasting "@昵称" as plain text does NOT mention anyone.
+import re as _re
+
+_AT_MENTION_RE = _re.compile(r'@([^\s@，。,；;：:！!？?~～]+)')
+_SENDKEYS_SPECIAL = set('+^%~(){}[]')
+
+
+def _sendkeys_literal(edit, text):
+    """Type raw text via UIA SendKeys, escaping characters with key syntax."""
+    escaped = ''.join('{' + ch + '}' if ch in _SENDKEYS_SPECIAL else ch for ch in text)
+    edit.SendKeys(escaped)
+
+
+def _parse_at_segments(message):
+    """Split a message into [('text', s) | ('at', nickname)] segments."""
+    segments, pos = [], 0
+    for m in _AT_MENTION_RE.finditer(message):
+        if m.start() > pos:
+            segments.append(('text', message[pos:m.start()]))
+        segments.append(('at', m.group(1)))
+        pos = m.end()
+    if pos < len(message):
+        segments.append(('text', message[pos:]))
+    return segments
+
+
+def _ctrl_rect(ctrl):
+    try:
+        r = ctrl.BoundingRectangle
+        return (r.left, r.top, r.right, r.bottom)
+    except Exception:
+        return None
+
+
+def _collect_list_controls(root, deadline, max_depth=10):
+    """Yield ListControl descendants within a time/depth budget."""
+    found = []
+
+    def walk(ctrl, depth):
+        if time.time() > deadline or depth > max_depth:
+            return
+        try:
+            children = ctrl.GetChildren()
+        except Exception:
+            return
+        for c in children:
+            try:
+                if c.ControlTypeName == 'ListControl':
+                    found.append(c)
+            except Exception:
+                continue
+            walk(c, depth + 1)
+
+    walk(root, 0)
+    return found
+
+
+def _score_at_popup_list(lst, edit_rect, root_rect, nickname):
+    """Score one ListControl as the '@' member picker; return (score, matched_item).
+
+    The picker pops up right above the chat input and lists members filtered by
+    the typed nickname. Session/message lists are excluded by geometry.
+    """
+    lr = _ctrl_rect(lst)
+    if not lr or not edit_rect:
+        return -1, None
+    l, t, r, b = lr
+    if r - l < 80 or b - t < 40:
+        return -1, None
+    el, et, er, _ = edit_rect
+    if r <= el or l >= er:
+        return -1, None
+    # must sit directly above the input box
+    if not (0 <= et - b <= 420):
+        return -1, None
+    # reject window-filling lists (message history / session list)
+    if root_rect and (b - t) > 0.55 * (root_rect[3] - root_rect[1]):
+        return -2, None
+
+    score = 1
+    identity = ''
+    try:
+        identity = f'{lst.ClassName or ""} {lst.AutomationId or ""}'
+    except Exception:
+        pass
+    if any(k in identity for k in ('Member', 'Select', 'At', 'Popover', 'Popup')):
+        score += 3
+
+    matched, best = None, None
+    try:
+        items = lst.GetChildren()
+    except Exception:
+        return -1, None
+    for it in items:
+        try:
+            if it.ControlTypeName != 'ListItemControl':
+                continue
+            name = (it.Name or '').strip()
+        except Exception:
+            continue
+        if not name:
+            continue
+        if nickname and nickname in name:
+            # prefer the shortest matching name (closest filter hit)
+            if best is None or len(name) < len(best):
+                best = name
+                matched = it
+    if matched is not None:
+        score += 4
+    return score, matched
+
+
+def _find_at_member_popup(wx, edit, nickname, timeout=3.0):
+    """Locate the member picker that appears after typing '@'+nickname.
+
+    Returns (list_ctrl, matched_item). Either may be None when the popup
+    didn't render or nothing matched the filter text.
+    """
+    root = wx.chat_window.root
+    edit_rect = _ctrl_rect(edit)
+    root_rect = _ctrl_rect(root)
+    deadline = time.time() + timeout
+    best_list, best_item, best_score = None, None, 0
+    while time.time() < deadline:
+        for lst in _collect_list_controls(root, deadline):
+            score, item = _score_at_popup_list(lst, edit_rect, root_rect, nickname)
+            if score > best_score:
+                best_list, best_item, best_score = lst, item, score
+        if best_score >= 5:  # identity/match hit — good enough, stop polling
+            break
+        if best_score > 0:
+            break  # geometric match only; one pass is enough, don't spam UIA
+        time.sleep(0.4)
+    if best_list is not None:
+        try:
+            log.info(f'[at-send] popup list: {best_list.ClassName} id={best_list.AutomationId} score={best_score}')
+        except Exception:
+            pass
+    return best_list, best_item
+
+
+def _click_list_item(item):
+    for attempt in (('click', lambda: item.Click(simulateMove=False)),
+                    ('click2', lambda: item.Click()),
+                    ('select', lambda: item.Select())):
+        label, fn = attempt
+        try:
+            fn()
+            return True
+        except Exception as e:
+            log.debug(f'[at-send] {label} failed: {e}')
+    return False
+
+
+def _type_at_mention(wx, edit, nickname):
+    """Insert one real mention into the input. Returns False only on fatal
+    input errors; an unmatched nickname degrades to plain text."""
+    try:
+        edit.SendKeys('@')
+    except Exception as e:
+        log.error(f'[at-send] typing "@" failed: {e}')
+        return False
+    time.sleep(0.5)
+    if nickname:
+        try:
+            _sendkeys_literal(edit, nickname)
+        except Exception as e:
+            log.debug(f'[at-send] typing filter "{nickname}" failed: {e}')
+    time.sleep(0.5)
+
+    lst, item = _find_at_member_popup(wx, edit, nickname)
+    if lst is None or item is None:
+        reason = 'popup not found' if lst is None else f'no member matches "{nickname}"'
+        log.warning(f'[at-send] {reason}; keeping "@{nickname}" as plain text')
+        try:
+            edit.SendKeys('{Esc}')  # close picker, typed text stays
+        except Exception:
+            pass
+        time.sleep(0.2)
+        return True
+
+    selected = '?'
+    try:
+        selected = (item.Name or '').strip()
+    except Exception:
+        pass
+    ok = _click_list_item(item)
+    time.sleep(0.4)
+    log.info(f'[at-send] mention "{nickname}" -> selected "{selected}": {"OK" if ok else "FAIL"}')
+    return ok
+
+
+def send_to_with_at(wx, target, message, target_type):
+    """Open a chat and send message, composing '@昵称' as real mentions.
+
+    Only meaningful for groups (the picker never appears in contact chats —
+    callers should route those to the plain send path)."""
+    from wx4py.core.exceptions import TargetNotFoundError
+    from wx4py.features.chat import ChatWindow
+
+    chat = wx.chat_window
+    try:
+        chat._open_chat_with_status(target, target_type)
+    except TargetNotFoundError:
+        log.error(f'[at-send] chat not found: {target}')
+        return False
+
+    edit = chat._get_chat_input()
+    if not edit:
+        log.error('[at-send] chat input not found')
+        return False
+    # focus + clear (also removes leftovers from a previously failed attempt)
+    edit = ChatWindow.prepare_input_for_paste(edit)
+    if not edit:
+        return False
+
+    segments = _parse_at_segments(message)
+    log.info(f'[at-send] composing {sum(1 for k, _ in segments if k == "at")} mention(s) for "{target}"')
+    ok = True
+    for kind, value in segments:
+        if not value:
+            continue
+        if kind == 'text':
+            # paste at cursor (end); do NOT clear — mentions must survive
+            if not chat.paste_text_into_focused_input(value):
+                ok = False
+                break
+        else:
+            if not _type_at_mention(wx, edit, value):
+                ok = False
+                break
+        time.sleep(0.15)
+
+    if not ok:
+        try:
+            edit.SendKeys('{Ctrl}a')
+            time.sleep(0.1)
+            edit.SendKeys('{Delete}')
+        except Exception:
+            pass
+        return False
+
+    try:
+        edit.SendKeys('{Enter}')
+    except Exception:
+        try:
+            edit.SendKeys('{Ctrl}{Enter}')
+        except Exception as e:
+            log.error(f'[at-send] send failed: {e}')
+            return False
+    time.sleep(0.3)
+    try:
+        chat._remember_successful_send(target, message)
+    except Exception:
+        pass
+    log.info(f'[at-send] sent to "{target}" with mentions')
+    return True
 
 
 # ── HTTP handler ──────────────────────────────────────────────────────
@@ -788,6 +1238,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_deep_health()
             elif path == '/recover':
                 self._handle_recover()
+            elif path == '/dismiss-update':
+                self._handle_dismiss_update()
             elif path == '/dump-uia':
                 self._handle_dump_uia()
             elif path == '/wechat-status':
@@ -985,6 +1437,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send({'ok': True, 'message': '恢复已触发'})
         except Exception as e:
             self._send({'ok': False, 'error': str(e)})
+
+    def _handle_dismiss_update(self):
+        """Synchronously dismiss only a verified WeChat update prompt."""
+        try:
+            dismissed = _dismiss_wechat_update_prompt()
+            self._send({'ok': dismissed, 'dismissed': dismissed})
+        except Exception as e:
+            log.warning(f'[recover] Manual update dismiss failed: {e}')
+            self._send({'ok': False, 'dismissed': False, 'error': str(e)})
 
     def _handle_dump_uia(self):
         """Dump all UIA element names for debugging login page."""
@@ -1651,33 +2112,68 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not wx.is_connected:
                     log.error('[send] wx4py still not connected after reconnect')
                     return False
-            # Restore window if needed — use IsIconic to avoid toggle trap
+            # Restore the live window before validating the cached UIA session.
+            # A manual re-login can replace the main HWND while wx4py continues
+            # to report is_connected=True for the old, dead window.
+            live_hwnd = 0
             try:
-                hwnd = self._get_wechat_hwnd()
-                if hwnd:
-                    is_iconic = win32gui.IsIconic(hwnd)
-                    is_visible = win32gui.IsWindowVisible(hwnd)
+                from wx4py.core.win32 import find_wechat_window
+                live_hwnd = find_wechat_window() or 0
+                if live_hwnd:
+                    is_iconic = win32gui.IsIconic(live_hwnd)
+                    is_visible = win32gui.IsWindowVisible(live_hwnd)
                     if is_iconic:
                         log.info(f'[send] restoring minimized window for {target}...')
-                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                        win32gui.ShowWindow(live_hwnd, win32con.SW_RESTORE)
                         t.sleep(0.5)
                     elif not is_visible:
                         log.info(f'[send] showing hidden window for {target}...')
-                        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                        win32gui.ShowWindow(live_hwnd, win32con.SW_SHOW)
                         t.sleep(0.5)
-                    # Ensure window is in foreground before wx4py touches it
-                    win32gui.SetForegroundWindow(hwnd)
+                    win32gui.SetForegroundWindow(live_hwnd)
                     t.sleep(0.3)
             except Exception as e:
                 log.debug(f'[send] window restore error: {e}')
-            ok = wx.chat_window.send_to(target, message, target_type=target_type)
-            log.info(f'[send] to [{target_type}] {target}: {"OK" if ok else "FAIL"}')
+
+            # Rebind only when the live window is demonstrably the logged-in
+            # main UI.  Never let a scheduled send click a login/security page.
+            cached_hwnd = 0
+            try:
+                if hasattr(wx, '_window'):
+                    cached_hwnd = getattr(wx._window, 'hwnd', 0) or 0
+            except Exception:
+                pass
+            if live_hwnd and cached_hwnd and live_hwnd != cached_hwnd:
+                if not _is_main_window(live_hwnd):
+                    log.error(
+                        f'[send] stale UIA session but live HWND is not a verified main window; '
+                        f'refusing rebind: cached={cached_hwnd}, live={live_hwnd}'
+                    )
+                    return False
+                log.info(f'[send] stale UIA session detected; safe-rebinding cached={cached_hwnd}, live={live_hwnd}')
+                rebind = soft_rebind_uia()
+                if not rebind.get('ok'):
+                    log.error(f'[send] safe-rebind failed: {rebind.get("error") or "not connected"}')
+                    return False
+                wx = get_wx()
+
+            # Group messages containing "@昵称" compose real mentions through
+            # the member picker; everything else goes the plain-text route.
+            use_at = target_type == 'group' and '@' in message
+
+            def _dispatch(client):
+                if use_at:
+                    return send_to_with_at(client, target, message, target_type)
+                return client.chat_window.send_to(target, message, target_type=target_type)
+
+            ok = _dispatch(wx)
+            log.info(f'[send] to [{target_type}] {target}{" (at)" if use_at else ""}: {"OK" if ok else "FAIL"}')
             # Retry once if first attempt failed (window may need to settle)
             if not ok:
                 log.info(f'[send] retrying [{target_type}] {target} in 2s...')
                 t.sleep(2)
                 wx = get_wx()
-                ok2 = wx.chat_window.send_to(target, message, target_type=target_type)
+                ok2 = _dispatch(wx)
                 log.info(f'[send] retry to [{target_type}] {target}: {"OK" if ok2 else "FAIL"}')
                 ok = ok2
             return ok

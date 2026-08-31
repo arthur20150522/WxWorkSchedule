@@ -7,11 +7,12 @@ import { verifyPassword, generateToken } from './auth.js';
 import { authenticateToken } from './authMiddleware.js';
 import { wxBridge } from './wxBridge.js';
 import { pushNotify } from './pushNotify.js';
+import { registerQrRoutes } from './qrRelay.js';
 import { taskQueue } from './taskQueue.js';
 import { calculateNextTime } from './taskQueue.js';
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '10mb' })); // raised for base64 QR screenshots
 const handleError = (res, e) => {
     console.error(e);
     const message = e instanceof Error ? e.message : 'Unknown internal server error';
@@ -40,6 +41,8 @@ app.post('/api/login', async (req, res) => {
         handleError(res, e);
     }
 });
+// ── QR login relay (public — called by bridge.py with shared secret) ──
+registerQrRoutes(app);
 // ── Protected routes ─────────────────────────────────────
 const apiRouter = express.Router();
 apiRouter.use(authenticateToken);
@@ -155,10 +158,11 @@ apiRouter.get('/wechat/status', async (_req, res) => {
         res.json({ running: false, pidCount: 0, pids: [], error: e.message });
     }
 });
-apiRouter.post('/wechat/kill', async (_req, res) => {
+apiRouter.post('/wechat/kill', async (req, res) => {
     try {
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         const result = await wxBridge.fetchBridge('/wechat-kill', 'POST');
-        await addLog('warn', `WeChat kill: ${result.message || result.error || 'ok'}`);
+        await addLog('warn', `WeChat kill requested by "${req.user}" from ${ip}: ${result.message || result.error || 'ok'}`);
         res.json(result);
     }
     catch (e) {

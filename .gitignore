@@ -36,10 +36,19 @@ server/.env
 server/data/qr/
 .user
 users/
+# runtime send audit (recipient names / timing) — never publish
+wx4py_send_audit.jsonl
 
 # Build artifacts
 # server/dist/  — TRACKED: ensures remote always has latest compiled JS
 client/dist/
+__pycache__/
+
+# Assistant tool memory
+.workbuddy/
+
+# Screenshots of the remote desktop (may contain private chat content)
+tools/screenshot_remote.png
 
 # Temp / debug files
 env_check.txt

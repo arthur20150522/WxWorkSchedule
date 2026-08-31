@@ -65,10 +65,33 @@ export const wxBridge = {
     },
     /** Send a message to a group or contact */
     async send(target, message, targetType) {
-        return fetchBridge('/send', {
+        const queued = await fetchBridge('/send', {
             method: 'POST',
             body: JSON.stringify({ target, message, targetType }),
         });
+        // The Python bridge executes sends on its own worker thread.  A successful
+        // POST only means "queued", not "sent".  Poll the task result so callers
+        // never advance a recurring task after a background send actually failed.
+        if (!queued.queued || !queued.task_id) {
+            return {
+                success: queued.success === true,
+                error: queued.error || (queued.success === true ? undefined : 'wx4py send was not queued'),
+            };
+        }
+        const deadline = Date.now() + 90_000;
+        while (Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            const task = await fetchBridge(`/task/${encodeURIComponent(queued.task_id)}`);
+            if (task.status === 'success') {
+                return task.result === true
+                    ? { success: true }
+                    : { success: false, error: 'wx4py background send returned false' };
+            }
+            if (task.status === 'failed') {
+                return { success: false, error: task.error || 'wx4py background send failed' };
+            }
+        }
+        return { success: false, error: 'wx4py background send timed out (90s)' };
     },
     /** Batch send to multiple targets */
     async batchSend(targets, message, targetType) {

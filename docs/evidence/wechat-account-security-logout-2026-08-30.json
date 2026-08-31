@@ -1,0 +1,80 @@
+{
+  "evidence_id": "wechat-account-security-logout-2026-08-30T03:25:46+08:00",
+  "classification": "account_session_logout_same_main_process",
+  "confidence": "high",
+  "timeline": {
+    "last_ok": "2026-08-30T03:25:31.166+08:00",
+    "child_process_changes_started": "2026-08-30T03:25:41.879+08:00",
+    "popup_observed": "2026-08-30T03:25:46.182+08:00"
+  },
+  "ui": {
+    "previous_state": "ok",
+    "current_state": "popup",
+    "whitelisted_prompt": "为了你的账号安全，请重新登录。"
+  },
+  "main_process": {
+    "name": "weixin.exe",
+    "pid_before": 8624,
+    "pid_after": 8624,
+    "created_before": "2026-08-30T03:16:08+08:00",
+    "created_after": "2026-08-30T03:16:08+08:00"
+  },
+  "child_process_traces": [
+    {"time": "2026-08-30T03:25:41.879+08:00", "action": "stop", "name": "weixin.exe", "pid": 2576, "exit_status": 563},
+    {"time": "2026-08-30T03:25:41.885+08:00", "action": "stop", "name": "weixin.exe", "pid": 8560, "exit_status": 563},
+    {"time": "2026-08-30T03:25:41.890+08:00", "action": "stop", "name": "weixin.exe", "pid": 6904, "exit_status": 563},
+    {"time": "2026-08-30T03:25:42.868+08:00", "action": "stop", "name": "weixin.exe", "pid": 6764, "exit_status": 0},
+    {"time": "2026-08-30T03:25:43.966+08:00", "action": "start", "name": "wechatappex.exe", "pid": 9648, "parent_pid": 8624},
+    {"time": "2026-08-30T03:25:44.888+08:00", "action": "start", "name": "wechatappex.exe", "pid": 6748, "parent_pid": 9648},
+    {"time": "2026-08-30T03:25:44.890+08:00", "action": "start", "name": "wechatappex.exe", "pid": 5544, "parent_pid": 9648}
+  ],
+  "environment": {
+    "active_console_session_before_after": 2,
+    "monitor_count_before_after": 2,
+    "primary_display_before_after": "1920x1080",
+    "local_ip_before_after": "172.21.48.195",
+    "public_ip_before_after": "39.106.127.176",
+    "winhttp_proxy": "direct",
+    "user_proxy_enabled": false,
+    "auto_config_url": null
+  },
+  "negative_evidence": {
+    "taskkill_process_creation": false,
+    "windows_application_error_or_wer": false,
+    "windows_system_or_power_event": false,
+    "terminal_session_event": false,
+    "project_task_or_live_send_03_20_to_03_27": false,
+    "project_process_control_03_20_to_03_27": false,
+    "schedule_enabled": false,
+    "process_kill_gate": false,
+    "hard_recovery_gate": false,
+    "pm2_treekill": false
+  },
+  "possible_confounders": [
+    "wx4py performed a connection check about 50 seconds before the event",
+    "the account had undergone multiple controlled process restarts and re-logins shortly beforehand"
+  ],
+  "post_event_preservation": {
+    "background_auto_recovery_disabled_at": "2026-08-30T03:29:35.648+08:00",
+    "checked_at": "2026-08-30T03:30:13.446+08:00",
+    "main_pid": 8624,
+    "state": "popup",
+    "prompt_unchanged": true
+  },
+  "reauthentication": {
+    "popup_last_confirmed": "2026-08-30T08:18:31.132+08:00",
+    "ui_transition_started": "2026-08-30T08:20:46.030+08:00",
+    "main_ui_ready": "2026-08-30T08:21:01.109+08:00",
+    "main_pid_before_after": 8624,
+    "main_created_before_after": "2026-08-30T03:16:08+08:00",
+    "public_ip": "39.106.127.176",
+    "session_id": 2,
+    "monitor_count": 2,
+    "automatic_recovery_enabled": false,
+    "hard_recovery_enabled": false,
+    "process_kill_enabled": false,
+    "inference": "The account was reauthenticated without replacing the WeChat main process; no project recovery action was enabled."
+  },
+  "raw_source": "C:\\Users\\Administrator\\WxWorkSchedule\\server\\data\\stability\\wechat_stability.jsonl",
+  "privacy": "No chat content, contact names, PM2 environment variables, credentials, or secrets are included."
+}

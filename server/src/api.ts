@@ -159,10 +159,11 @@ apiRouter.get('/wechat/status', async (_req, res) => {
   }
 });
 
-apiRouter.post('/wechat/kill', async (_req, res) => {
+apiRouter.post('/wechat/kill', async (req: AuthRequest, res) => {
   try {
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const result = await wxBridge.fetchBridge<{success: boolean; killed?: number; message?: string; error?: string}>('/wechat-kill', 'POST');
-    await addLog('warn', `WeChat kill: ${result.message || result.error || 'ok'}`);
+    await addLog('warn', `WeChat kill requested by "${req.user}" from ${ip}: ${result.message || result.error || 'ok'}`);
     res.json(result);
   } catch (e) {
     res.status(500).json({ success: false, error: (e as Error).message });

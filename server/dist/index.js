@@ -108,6 +108,12 @@ const main = async () => {
             const schedule = db.data.wechatSchedule;
             if (!schedule || !schedule.enabled)
                 return;
+            // A DB/UI toggle must never be enough on its own to kill WeChat.  The
+            // explicit environment gate prevents an accidental 03:00 schedule from
+            // looking like a platform/security logout.  Leave this unset for normal
+            // always-online operation.
+            if (process.env.ALLOW_WECHAT_PROCESS_KILL !== 'true')
+                return;
             const now = new Date();
             const hh = now.getHours();
             const mm = now.getMinutes();
