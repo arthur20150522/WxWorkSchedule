@@ -972,78 +972,95 @@ def _ctrl_rect(ctrl):
         return None
 
 
-def _collect_list_controls(root, deadline, max_depth=10):
-    """Yield ListControl descendants within a time/depth budget."""
-    found = []
+def _collect_item_containers(root, deadline, edit_rect, root_rect, max_depth=12):
+    """Collect controls that look like rendered lists of named items.
+
+    WeChat 4.x (mmui) does not always expose the '@' member picker as a
+    ListControl, so accept any container with >=2 named children whose
+    geometry is compatible with a picker popup near the chat input.
+    """
+    out = []
 
     def walk(ctrl, depth):
-        if time.time() > deadline or depth > max_depth:
+        if time.time() > deadline or depth > max_depth or len(out) >= 60:
             return
         try:
             children = ctrl.GetChildren()
         except Exception:
             return
+        named = 0
         for c in children:
             try:
-                if c.ControlTypeName == 'ListControl':
-                    found.append(c)
+                if (c.Name or '').strip():
+                    named += 1
+                    if named >= 2:
+                        break
             except Exception:
                 continue
+        if named >= 2:
+            out.append(ctrl)
+        for c in children:
             walk(c, depth + 1)
 
     walk(root, 0)
-    return found
+    return out
 
 
-def _score_at_popup_list(lst, edit_rect, root_rect, nickname):
-    """Score one ListControl as the '@' member picker; return (score, matched_item).
+def _rects_overlap_h(a, b, fraction=0.4):
+    """True when horizontal ranges of two rects overlap by >= fraction of b's width."""
+    overlap = min(a[2], b[2]) - max(a[0], b[0])
+    width = b[2] - b[0]
+    return width > 0 and overlap >= width * fraction
 
-    The picker pops up right above the chat input and lists members filtered by
-    the typed nickname. Session/message lists are excluded by geometry.
+
+def _score_at_popup_container(ctrl, edit_rect, root_rect, nickname):
+    """Score a candidate container as the '@' member picker.
+
+    Returns (score, matched_item). >0 means plausible picker; >=5 means a
+    member matching the filter text was found inside.
     """
-    lr = _ctrl_rect(lst)
-    if not lr or not edit_rect:
+    rect = _ctrl_rect(ctrl)
+    if not rect or not edit_rect:
         return -1, None
-    l, t, r, b = lr
-    if r - l < 80 or b - t < 40:
+    l, t, r, b = rect
+    if r - l < 80 or b - t < 30:
         return -1, None
-    el, et, er, _ = edit_rect
-    if r <= el or l >= er:
+    el, et, er, eb = edit_rect
+    if not _rects_overlap_h(rect, edit_rect, 0.5):
         return -1, None
-    # must sit directly above the input box
-    if not (0 <= et - b <= 420):
+    # picker floats above OR below the input box, within a screen or so
+    above = 0 <= et - b <= 450
+    below = 0 <= t - eb <= 450
+    if not (above or below):
         return -1, None
-    # reject window-filling lists (message history / session list)
-    if root_rect and (b - t) > 0.55 * (root_rect[3] - root_rect[1]):
+    if root_rect and (b - t) > 0.6 * (root_rect[3] - root_rect[1]):
         return -2, None
 
     score = 1
     identity = ''
     try:
-        identity = f'{lst.ClassName or ""} {lst.AutomationId or ""}'
+        identity = f'{ctrl.ClassName or ""} {ctrl.AutomationId or ""}'
     except Exception:
         pass
-    if any(k in identity for k in ('Member', 'Select', 'At', 'Popover', 'Popup')):
+    if any(k in identity for k in ('Member', 'Select', 'At', 'Popover', 'Popup', 'Tip')):
         score += 3
 
-    matched, best = None, None
+    matched = None
+    best_name = None
     try:
-        items = lst.GetChildren()
+        items = ctrl.GetChildren()
     except Exception:
         return -1, None
     for it in items:
         try:
-            if it.ControlTypeName != 'ListItemControl':
-                continue
             name = (it.Name or '').strip()
         except Exception:
             continue
         if not name:
             continue
         if nickname and nickname in name:
-            # prefer the shortest matching name (closest filter hit)
-            if best is None or len(name) < len(best):
-                best = name
+            if best_name is None or len(name) < len(best_name):
+                best_name = name
                 matched = it
     if matched is not None:
         score += 4
@@ -1053,30 +1070,33 @@ def _score_at_popup_list(lst, edit_rect, root_rect, nickname):
 def _find_at_member_popup(wx, edit, nickname, timeout=3.0):
     """Locate the member picker that appears after typing '@'+nickname.
 
-    Returns (list_ctrl, matched_item). Either may be None when the popup
+    Returns (container, matched_item). Either may be None when the popup
     didn't render or nothing matched the filter text.
     """
     root = wx.chat_window.root
     edit_rect = _ctrl_rect(edit)
     root_rect = _ctrl_rect(root)
     deadline = time.time() + timeout
-    best_list, best_item, best_score = None, None, 0
+    best_ctrl, best_item, best_score = None, None, 0
     while time.time() < deadline:
-        for lst in _collect_list_controls(root, deadline):
-            score, item = _score_at_popup_list(lst, edit_rect, root_rect, nickname)
+        for ctrl in _collect_item_containers(root, deadline, edit_rect, root_rect):
+            score, item = _score_at_popup_container(ctrl, edit_rect, root_rect, nickname)
             if score > best_score:
-                best_list, best_item, best_score = lst, item, score
+                best_ctrl, best_item, best_score = ctrl, item, score
         if best_score >= 5:  # identity/match hit — good enough, stop polling
             break
         if best_score > 0:
             break  # geometric match only; one pass is enough, don't spam UIA
         time.sleep(0.4)
-    if best_list is not None:
+    if best_ctrl is not None:
         try:
-            log.info(f'[at-send] popup list: {best_list.ClassName} id={best_list.AutomationId} score={best_score}')
+            log.info(f'[at-send] popup: type={best_ctrl.ControlTypeName} cls={best_ctrl.ClassName} '
+                     f'id={best_ctrl.AutomationId} score={best_score}')
         except Exception:
             pass
-    return best_list, best_item
+    else:
+        log.warning('[at-send] popup scan found no candidate container')
+    return best_ctrl, best_item
 
 
 def _click_list_item(item):
@@ -2214,6 +2234,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     time.sleep(1.2)
                     out['input_value_filtered'] = _dump_input_value(edit)
                     out['filtered'] = _dump_uia_region(chat.root, region, None)
+                    # how would the current finder judge this state?
+                    lst, item = _find_at_member_popup(wx, edit, mention, timeout=2.0)
+                    out['finder_verdict'] = {
+                        'found': lst is not None,
+                        'matched': item is not None,
+                        'selected_name': (item.Name or '').strip() if item is not None else None,
+                        'container_class': (lst.ClassName if lst is not None else None),
+                    }
                 except Exception as e:
                     out['filter_error'] = str(e)
 
