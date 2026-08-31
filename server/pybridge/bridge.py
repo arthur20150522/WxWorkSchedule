@@ -1197,6 +1197,65 @@ def send_to_with_at(wx, target, message, target_type):
     return True
 
 
+# ── UIA debug probe (dump tree around the chat input while typing '@') ───
+def _ctrl_name(ctrl, attr):
+    try:
+        v = getattr(ctrl, attr)
+        return v() if callable(v) else v
+    except Exception:
+        return None
+
+
+def _dump_uia_region(root, region, skip_rect, max_depth=14, max_nodes=600):
+    """Depth-first dump of controls intersecting screen-rect `region`.
+
+    WindowControl nodes are always kept (mmui popovers may sit outside the
+    region); `skip_rect` excludes the main window itself from a desktop scan.
+    """
+    nodes = []
+
+    def include(rect, ctrl_type):
+        if ctrl_type == 'WindowControl':
+            return True
+        if rect is None or region is None:
+            return True
+        l, t, r, b = rect
+        return not (r <= region[0] or l >= region[2] or b <= region[1] or t >= region[3])
+
+    def walk(ctrl, depth):
+        if depth > max_depth or len(nodes) >= max_nodes:
+            return
+        ctype = _ctrl_name(ctrl, 'ControlTypeName') or ''
+        rect = _ctrl_rect(ctrl)
+        if skip_rect and rect and rect == skip_rect:
+            return
+        if include(rect, ctype):
+            nodes.append({
+                'd': depth,
+                'type': ctype,
+                'cls': _ctrl_name(ctrl, 'ClassName'),
+                'aid': _ctrl_name(ctrl, 'AutomationId'),
+                'name': (_ctrl_name(ctrl, 'Name') or '')[:40],
+                'rect': rect,
+            })
+        try:
+            children = ctrl.GetChildren()
+        except Exception:
+            return
+        for ch in children:
+            walk(ch, depth + 1)
+
+    walk(root, 0)
+    return nodes
+
+
+def _dump_input_value(edit):
+    try:
+        return edit.GetValuePattern().Value
+    except Exception:
+        return None
+
+
 # ── HTTP handler ──────────────────────────────────────────────────────
 class BridgeHandler(BaseHTTPRequestHandler):
 
@@ -1274,6 +1333,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._handle_wechat_launch()
             elif path == '/soft-rebind-uia':
                 self._handle_soft_rebind()
+            elif path == '/debug/at-probe':
+                self._handle_debug_at_probe(body)
             else:
                 self._send({'error': 'not found'}, 404)
         except Exception as e:
@@ -2088,6 +2149,98 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 continue
 
         self._send(contacts)
+
+    def _handle_debug_at_probe(self, body):
+        """Debug: open a chat, type '@' (+optional filter), dump nearby UIA tree.
+
+        Body: {target, target_type?, mention?}. Nothing is ever sent — the
+        picker is dismissed with Esc and the input cleared afterwards.
+        Runs synchronously by polling the serial task queue (UIA not thread-safe).
+        """
+        target = body.get('target', '')
+        target_type = body.get('target_type', 'group')
+        mention = body.get('mention', '')
+        if not target:
+            self._send({'success': False, 'error': 'target required'}, 400)
+            return
+
+        def _do():
+            from wx4py.features.chat import ChatWindow
+            wx = get_wx()
+            chat = wx.chat_window
+            try:
+                chat._open_chat_with_status(target, target_type)
+            except Exception as e:
+                return {'ok': False, 'error': f'open_chat: {e}'}
+            edit = chat._get_chat_input()
+            if not edit:
+                return {'ok': False, 'error': 'no chat input'}
+            edit = ChatWindow.prepare_input_for_paste(edit)
+            if not edit:
+                return {'ok': False, 'error': 'prepare input failed'}
+
+            er = _ctrl_rect(edit)
+            if not er:
+                return {'ok': False, 'error': 'no input rect'}
+            region = (er[0] - 80, er[1] - 600, er[2] + 80, er[3] + 260)
+            root_rect = _ctrl_rect(chat.root)
+
+            out = {
+                'ok': True,
+                'target': target,
+                'region': region,
+                'input_value_before': _dump_input_value(edit),
+            }
+            try:
+                edit.SendKeys('@')
+                time.sleep(1.2)
+            except Exception as e:
+                out['sendkeys_error'] = str(e)
+                return out
+            out['input_value_at'] = _dump_input_value(edit)
+            out['after_at'] = _dump_uia_region(chat.root, region, None)
+
+            # top-level windows of other popups (owned windows are desktop
+            # siblings of the main window, not descendants of it)
+            try:
+                desktop = chat.root.GetParentControl()
+                out['desktop_windows'] = _dump_uia_region(desktop, region, skip_rect=root_rect, max_depth=6)
+            except Exception as e:
+                out['desktop_windows_error'] = str(e)
+
+            if mention:
+                try:
+                    _sendkeys_literal(edit, mention)
+                    time.sleep(1.2)
+                    out['input_value_filtered'] = _dump_input_value(edit)
+                    out['filtered'] = _dump_uia_region(chat.root, region, None)
+                except Exception as e:
+                    out['filter_error'] = str(e)
+
+            try:
+                edit.SendKeys('{Esc}')
+                time.sleep(0.2)
+                edit.SendKeys('{Ctrl}a')
+                time.sleep(0.1)
+                edit.SendKeys('{Delete}')
+            except Exception as e:
+                out['cleanup_error'] = str(e)
+            return out
+
+        tid = _start_task(_do)
+        log.info(f'[at-probe] queued for "{target}" task={tid}')
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            with _tasks_lock:
+                task = _tasks.get(tid)
+            if task['status'] == 'success':
+                self._send(task['result'] or {'ok': True})
+                return
+            if task['status'] == 'failed':
+                self._send({'ok': False, 'error': task['error']}, 500)
+                return
+            time.sleep(0.5)
+        self._send({'ok': False, 'error': 'probe timeout'}, 504)
 
     def _handle_send(self, body):
         target = body.get('target', '')
