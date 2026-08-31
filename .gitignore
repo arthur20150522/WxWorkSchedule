@@ -40,8 +40,10 @@ users/
 wx4py_send_audit.jsonl
 
 # Build artifacts
-# server/dist/  — TRACKED: ensures remote always has latest compiled JS
-client/dist/
+# server/dist/ and client/dist/ are TRACKED: the remote deploy only does
+# `git reset --hard` + pm2 restart — untracked build output gets lost by that
+# reset (caused the 2026-08-31 white screen: index.html referenced a JS bundle
+# git never carried)
 __pycache__/
 
 # Assistant tool memory
