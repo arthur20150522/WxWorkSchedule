@@ -945,10 +945,14 @@ _AT_MENTION_RE = _re.compile(r'@([^\s@，。,；;：:！!？?~～]+)')
 _SENDKEYS_SPECIAL = set('+^%~(){}[]')
 
 
+def _escape_sendkeys(text):
+    """Escape characters with uiautomation key syntax before SendKeys."""
+    return ''.join('{' + ch + '}' if ch in _SENDKEYS_SPECIAL else ch for ch in text)
+
+
 def _sendkeys_literal(edit, text):
     """Type raw text via UIA SendKeys, escaping characters with key syntax."""
-    escaped = ''.join('{' + ch + '}' if ch in _SENDKEYS_SPECIAL else ch for ch in text)
-    edit.SendKeys(escaped)
+    edit.SendKeys(_escape_sendkeys(text))
 
 
 def _parse_at_segments(message):
@@ -972,131 +976,52 @@ def _ctrl_rect(ctrl):
         return None
 
 
-def _collect_item_containers(root, deadline, edit_rect, root_rect, max_depth=12):
-    """Collect controls that look like rendered lists of named items.
+def _find_mention_item(wx, nickname, timeout=3.0):
+    """Locate the WeChat 4.x '@' member picker and the item for `nickname`.
 
-    WeChat 4.x (mmui) does not always expose the '@' member picker as a
-    ListControl, so accept any container with >=2 named children whose
-    geometry is compatible with a picker popup near the chat input.
-    """
-    out = []
+    Verified live structure (probe 2026-08-31): the picker is a popover child
+    of the main window — mmui::XPopover (AutomationId=MentionPopover) holding
+    ListControl mmui::XTableView (AutomationId=chat_mention_list) whose rows
+    are named ListItemControls. Trust the IDs, not geometry: the popover
+    overlaps the input box's top edge, which broke rect-based scoring.
 
-    def walk(ctrl, depth):
-        if time.time() > deadline or depth > max_depth or len(out) >= 60:
-            return
-        try:
-            children = ctrl.GetChildren()
-        except Exception:
-            return
-        named = 0
-        for c in children:
-            try:
-                if (c.Name or '').strip():
-                    named += 1
-                    if named >= 2:
-                        break
-            except Exception:
-                continue
-        if named >= 2:
-            out.append(ctrl)
-        for c in children:
-            walk(c, depth + 1)
-
-    walk(root, 0)
-    return out
-
-
-def _rects_overlap_h(a, b, fraction=0.4):
-    """True when horizontal ranges of two rects overlap by >= fraction of b's width."""
-    overlap = min(a[2], b[2]) - max(a[0], b[0])
-    width = b[2] - b[0]
-    return width > 0 and overlap >= width * fraction
-
-
-def _score_at_popup_container(ctrl, edit_rect, root_rect, nickname):
-    """Score a candidate container as the '@' member picker.
-
-    Returns (score, matched_item). >0 means plausible picker; >=5 means a
-    member matching the filter text was found inside.
-    """
-    rect = _ctrl_rect(ctrl)
-    if not rect or not edit_rect:
-        return -1, None
-    l, t, r, b = rect
-    if r - l < 80 or b - t < 30:
-        return -1, None
-    el, et, er, eb = edit_rect
-    if not _rects_overlap_h(rect, edit_rect, 0.5):
-        return -1, None
-    # picker floats above OR below the input box, within a screen or so
-    above = 0 <= et - b <= 450
-    below = 0 <= t - eb <= 450
-    if not (above or below):
-        return -1, None
-    if root_rect and (b - t) > 0.6 * (root_rect[3] - root_rect[1]):
-        return -2, None
-
-    score = 1
-    identity = ''
-    try:
-        identity = f'{ctrl.ClassName or ""} {ctrl.AutomationId or ""}'
-    except Exception:
-        pass
-    if any(k in identity for k in ('Member', 'Select', 'At', 'Popover', 'Popup', 'Tip')):
-        score += 3
-
-    matched = None
-    best_name = None
-    try:
-        items = ctrl.GetChildren()
-    except Exception:
-        return -1, None
-    for it in items:
-        try:
-            name = (it.Name or '').strip()
-        except Exception:
-            continue
-        if not name:
-            continue
-        if nickname and nickname in name:
-            if best_name is None or len(name) < len(best_name):
-                best_name = name
-                matched = it
-    if matched is not None:
-        score += 4
-    return score, matched
-
-
-def _find_at_member_popup(wx, edit, nickname, timeout=3.0):
-    """Locate the member picker that appears after typing '@'+nickname.
-
-    Returns (container, matched_item). Either may be None when the popup
-    didn't render or nothing matched the filter text.
+    Returns (list_ctrl, matched_item, visible_count). list_ctrl None means the
+    picker never appeared; matched_item None means it's up but nickname isn't
+    in the (possibly virtualized) visible rows.
     """
     root = wx.chat_window.root
-    edit_rect = _ctrl_rect(edit)
-    root_rect = _ctrl_rect(root)
     deadline = time.time() + timeout
-    best_ctrl, best_item, best_score = None, None, 0
     while time.time() < deadline:
-        for ctrl in _collect_item_containers(root, deadline, edit_rect, root_rect):
-            score, item = _score_at_popup_container(ctrl, edit_rect, root_rect, nickname)
-            if score > best_score:
-                best_ctrl, best_item, best_score = ctrl, item, score
-        if best_score >= 5:  # identity/match hit — good enough, stop polling
-            break
-        if best_score > 0:
-            break  # geometric match only; one pass is enough, don't spam UIA
-        time.sleep(0.4)
-    if best_ctrl is not None:
         try:
-            log.info(f'[at-send] popup: type={best_ctrl.ControlTypeName} cls={best_ctrl.ClassName} '
-                     f'id={best_ctrl.AutomationId} score={best_score}')
-        except Exception:
-            pass
-    else:
-        log.warning('[at-send] popup scan found no candidate container')
-    return best_ctrl, best_item
+            pop = root.WindowControl(AutomationId='MentionPopover')
+            if not pop.Exists(maxSearchSeconds=0.5):
+                time.sleep(0.3)
+                continue
+            lst = pop.ListControl(AutomationId='chat_mention_list')
+            if not lst.Exists(maxSearchSeconds=0.5):
+                time.sleep(0.3)
+                continue
+            items = []
+            for it in lst.GetChildren():
+                try:
+                    name = (it.Name or '').strip()
+                    if name:
+                        items.append((it, name))
+                except Exception:
+                    continue
+            if not items:
+                time.sleep(0.3)
+                continue
+            matched, best = None, None
+            for it, name in items:
+                # prefer the shortest matching name (closest filter hit)
+                if nickname and nickname in name and (best is None or len(name) < len(best)):
+                    best, matched = name, it
+            return lst, matched, len(items)
+        except Exception as e:
+            log.debug(f'[at-send] picker scan error: {e}')
+            time.sleep(0.3)
+    return None, None, 0
 
 
 def _click_list_item(item):
@@ -1113,24 +1038,32 @@ def _click_list_item(item):
 
 
 def _type_at_mention(wx, edit, nickname):
-    """Insert one real mention into the input. Returns False only on fatal
-    input errors; an unmatched nickname degrades to plain text."""
+    """Insert one real mention: type '@', then pick the member from the
+    MentionPopover. Returns False only on fatal input errors; an unmatched
+    nickname degrades to plain text.
+
+    Typing filter text via Control.SendKeys steals focus and CLOSES the
+    picker (verified live), so match against the visible list first and only
+    fall back to focus-less global keystrokes for virtualized big groups.
+    """
     try:
         edit.SendKeys('@')
     except Exception as e:
         log.error(f'[at-send] typing "@" failed: {e}')
         return False
-    time.sleep(0.5)
-    if nickname:
-        try:
-            _sendkeys_literal(edit, nickname)
-        except Exception as e:
-            log.debug(f'[at-send] typing filter "{nickname}" failed: {e}')
-    time.sleep(0.5)
 
-    lst, item = _find_at_member_popup(wx, edit, nickname)
+    lst, item, visible = _find_mention_item(wx, nickname, timeout=3.0)
+    if lst is not None and item is None:
+        try:
+            import uiautomation as _auto
+            _auto.SendKeys(_escape_sendkeys(nickname), waitInterval=0.02)
+        except Exception as e:
+            log.debug(f'[at-send] focusless filter typing failed: {e}')
+        time.sleep(0.8)
+        lst, item, visible = _find_mention_item(wx, nickname, timeout=2.0)
+
     if lst is None or item is None:
-        reason = 'popup not found' if lst is None else f'no member matches "{nickname}"'
+        reason = 'picker did not appear' if lst is None else f'no member matches "{nickname}"'
         log.warning(f'[at-send] {reason}; keeping "@{nickname}" as plain text')
         try:
             edit.SendKeys('{Esc}')  # close picker, typed text stays
@@ -1146,7 +1079,8 @@ def _type_at_mention(wx, edit, nickname):
         pass
     ok = _click_list_item(item)
     time.sleep(0.4)
-    log.info(f'[at-send] mention "{nickname}" -> selected "{selected}": {"OK" if ok else "FAIL"}')
+    log.info(f'[at-send] mention "{nickname}" -> selected "{selected}" ({visible} visible): '
+             f'{"OK" if ok else "FAIL"}')
     return ok
 
 
@@ -2220,6 +2154,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
             out['input_value_at'] = _dump_input_value(edit)
             out['after_at'] = _dump_uia_region(chat.root, region, None)
 
+            # how does the current picker finder judge this state?  (run BEFORE
+            # any filter typing — stealing focus dismisses the popover)
+            if mention:
+                try:
+                    lst, item, visible = _find_mention_item(wx, mention, timeout=2.0)
+                    out['finder_verdict'] = {
+                        'found': lst is not None,
+                        'matched': item is not None,
+                        'selected_name': (item.Name or '').strip() if item is not None else None,
+                        'container_class': (lst.ClassName if lst is not None else None),
+                        'visible': visible,
+                    }
+                except Exception as e:
+                    out['finder_error'] = str(e)
+
             # top-level windows of other popups (owned windows are desktop
             # siblings of the main window, not descendants of it)
             try:
@@ -2229,19 +2178,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 out['desktop_windows_error'] = str(e)
 
             if mention:
+                # filtered-state dump for reference (note: focus-stealing keys
+                # dismiss the popover, so expect it to be gone here)
                 try:
                     _sendkeys_literal(edit, mention)
                     time.sleep(1.2)
                     out['input_value_filtered'] = _dump_input_value(edit)
                     out['filtered'] = _dump_uia_region(chat.root, region, None)
-                    # how would the current finder judge this state?
-                    lst, item = _find_at_member_popup(wx, edit, mention, timeout=2.0)
-                    out['finder_verdict'] = {
-                        'found': lst is not None,
-                        'matched': item is not None,
-                        'selected_name': (item.Name or '').strip() if item is not None else None,
-                        'container_class': (lst.ClassName if lst is not None else None),
-                    }
                 except Exception as e:
                     out['filter_error'] = str(e)
 
