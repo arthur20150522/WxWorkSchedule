@@ -238,6 +238,18 @@ metadata:
 
 ---
 
+## 2026-09-02 操作日志
+
+### — 掉线推送链接"已失效"修复 + 恢复点击即时触发
+
+- **现象** 手机打开掉线推送的二维码链接显示"链接已失效（超过 5 分钟无刷新）"，而远端微信卡在"为了你的账号安全，请重新登录"弹窗
+- **根因** ①推送早于二维码：`getQrViewUrl()` 在掉线推送瞬间就生成 token，但帧要等恢复自动化点掉"我知道了"+"进入微信"后才有 ②`qrRelay` sweep 的 `liveLastUpdate` 初始为 0，一帧未到时第一次 60s 扫描就判死会话 → 唯一推送的链接必死 ③deep-health 探测到 popup/login 不触发恢复（原注释"交给 5 分钟循环"），叠加循环 5min 间隔 + 10min 冷却，弹窗可滞留 15 分钟
+- **修复** ①`bridge.py _handle_deep_health`：popup/login 即后台线程触发 `try_auto_recover`（10min 冷却 + 恢复锁保留防轰炸）②`qrRelay.ts` sweep 加 `liveLastUpdate &&`：零帧会话永不过期，推送链接持续有效，二维码上屏后同一 token 直接可用；dist 同步手改
+- **验证** bridge.py `py_compile` ✅ / dist `node --check` ✅（远程 tsc 会重新生成 dist）
+- **效果** 掉线 → ≤5min 健康检查 → 同一时刻推链接 + 点进入微信 → 二维码推流进同一 token，手机旧链接刷新即见码
+
+---
+
 ## 待办
 
 | P | 任务 |

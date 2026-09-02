@@ -101,9 +101,10 @@ export function registerQrRoutes(app) {
     if (!QR_SECRET) {
         console.warn('[QR] QR_PUSH_SECRET not set in .env — /api/qr/live will reject all uploads');
     }
-    // Live-session expiry sweep: no frames for LIVE_TTL_MS → destroy session
+    // Live-session expiry sweep: no frames for LIVE_TTL_MS → destroy session.
+    // Zero-frame sessions never expire — pushed link must survive until QR appears.
     setInterval(() => {
-        if (liveToken && Date.now() - liveLastUpdate > LIVE_TTL_MS) {
+        if (liveToken && liveLastUpdate && Date.now() - liveLastUpdate > LIVE_TTL_MS) {
             console.log('[QR] Live session expired (no frames) — clearing');
             clearLive('expired');
         }

@@ -1436,7 +1436,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send({'ok': False, 'reason': detail, 'stage': 'waiting'})
             elif state in ('popup', 'login'):
                 self._send({'ok': False, 'reason': detail, 'stage': state})
-                # Recovery is handled by the 5-min background loop (no auto-trigger here)
+                # Node pushes the QR link on this very health check — kick the
+                # login click now instead of waiting up to 5min for the loop.
+                # try_auto_recover's 10min cooldown + lock still prevent bombing.
+                if AUTO_RECOVER_ENABLED:
+                    threading.Thread(target=try_auto_recover, daemon=True).start()
             else:
                 self._send({'ok': False, 'reason': detail, 'stage': 'unknown'})
                 # Recovery is handled by the 5-min background loop (no auto-trigger here)
