@@ -247,6 +247,9 @@ metadata:
 - **修复** ①`bridge.py _handle_deep_health`：popup/login 即后台线程触发 `try_auto_recover`（10min 冷却 + 恢复锁保留防轰炸）②`qrRelay.ts` sweep 加 `liveLastUpdate &&`：零帧会话永不过期，推送链接持续有效，二维码上屏后同一 token 直接可用；dist 同步手改
 - **验证** bridge.py `py_compile` ✅ / dist `node --check` ✅（远程 tsc 会重新生成 dist）
 - **效果** 掉线 → ≤5min 健康检查 → 同一时刻推链接 + 点进入微信 → 二维码推流进同一 token，手机旧链接刷新即见码
+- **部署** f3bc51f push → 远端 pull + tsc + pm2 restart ✅；**补齐丢失的环境开关** `ALLOW_WECHAT_AUTO_RECOVERY=true`（旧进程一直打印 "auto-recovery disabled" —— 弹窗卡死的总根因：历次 pm2 重启时环境变量丢失）+ `pm2 save` 持久化
+- **端到端实测** 11:14:10 五分钟循环触发 → wx4py 连上登录窗(HWND=60031498) → 自动点击"我知道了" → 二维码推流启动 → 帧上传成功（11963B，目检为可扫"扫码登录"码）✅；本轮掉线新链接：`https://wechat.eastpolar.top/api/qr/view/2fde659523134c9805994a8ed6d0baf7`
+- **排查插曲** ①ssh 会话看不到 GUI（会话隔离），手动 DEBUG 复现会误报"未找到微信窗口"，一切以 pm2 进程内日志为准 ②py-spy（已装）确认线程健康，前期"线程卡死"判断系时间线误读 ③"进入微信"按钮 UIA 未找到，但弹窗点掉后微信直接停在二维码窗口，无需再点
 
 ---
 
