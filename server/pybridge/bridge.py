@@ -97,12 +97,34 @@ def _is_wechat_window_target(ctrl):
     return class_name == 'mmui::MainWindow' or 'QWindowIcon' in class_name
 
 
+def _resolve_uia_module():
+    """Return the uiautomation module that wx4py actually uses.
+
+    The fork vendors a full copy at wx4py.core.uiautomation; the top-level
+    'uiautomation' package is NOT a wx4py dependency and is absent on the
+    production host, so the vendored module must win.
+    """
+    try:
+        from wx4py.core import uiautomation as vendored
+        return vendored
+    except Exception:
+        pass
+    try:
+        import uiautomation as top_level
+        return top_level
+    except Exception:
+        return None
+
+
 def _install_wechat_esc_guard():
     global _esc_guard_installed
     if _esc_guard_installed:
         return
     try:
-        import uiautomation as auto
+        auto = _resolve_uia_module()
+        if auto is None:
+            log.error('[esc-guard] uiautomation module not found; guard NOT installed')
+            return
         original_send_keys = auto.Control.SendKeys
 
         def guarded_send_keys(self, keys, *args, **kwargs):
@@ -113,7 +135,7 @@ def _install_wechat_esc_guard():
 
         auto.Control.SendKeys = guarded_send_keys
         _esc_guard_installed = True
-        log.info('[esc-guard] installed: Esc to WeChat main window is now blocked')
+        log.info(f'[esc-guard] installed on {getattr(auto, "__name__", "uiautomation")}.Control.SendKeys')
     except Exception as e:
         log.error(f'[esc-guard] install failed: {e}')
 
