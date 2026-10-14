@@ -52,7 +52,8 @@
 - 用户: `Administrator` (SSH key 认证)
 - 项目路径: `C:\Users\Administrator\WxWorkSchedule`
 - PM2 进程名: `wx-schedule`（入口: `server/dist/index.js`，不是 `api.js`）
-- 域名: `wechat.eastpolar.top` (nginx → :3000)
+- 域名: `wechat.eastpolar.top` → Cloudflare 橙云 → cloudflared 隧道（Windows 服务 `cloudflared`，`C:\cf.exe tunnel run`）→ `http://localhost:3000`
+- nginx（`C:\nginx`，仅监听 80，按 server_name 反代 :3000）不在公网主链路，只影响直连 80 端口的请求
 
 ---
 
