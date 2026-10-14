@@ -67,10 +67,62 @@ def _task_worker():
         time.sleep(0.5)
     log.info('[queue] Send worker thread stopped')
 
+# ── White-screen guard: never inject Esc into the WeChat main window ──
+# 2026-10-14 root cause: wx4py `_get_search_edit` failure-retry block sent
+# {Esc}{Esc}{Ctrl}f to the main window when no search edit was found. On
+# Weixin 4.x an Esc at main-window level collapses the panel (window becomes
+# invisible), the tray restore then fails and the UIA tree collapses to 1
+# node ("white screen") — every later send then fails with
+# "not found in 群聊". Same pattern hit 2026-08-30 10:00.
+# Guard: swallow Esc aimed at the WeChat top-level window only. Esc sent to
+# child controls (e.g. the search edit) and Ctrl+F are untouched.
+_esc_guard_installed = False
+
+
+def _is_wechat_window_target(ctrl):
+    """True only for the WeChat top-level window element (not its children)."""
+    try:
+        class_name = ctrl.ClassName or ''
+    except Exception:
+        class_name = ''
+    try:
+        if ctrl.ControlTypeName == 'WindowControl':
+            hwnd = int(ctrl.NativeWindowHandle or 0)
+            if hwnd:
+                from wx4py.core.win32 import find_wechat_window
+                if hwnd == int(find_wechat_window() or 0):
+                    return True
+    except Exception:
+        pass
+    return class_name == 'mmui::MainWindow' or 'QWindowIcon' in class_name
+
+
+def _install_wechat_esc_guard():
+    global _esc_guard_installed
+    if _esc_guard_installed:
+        return
+    try:
+        import uiautomation as auto
+        original_send_keys = auto.Control.SendKeys
+
+        def guarded_send_keys(self, keys, *args, **kwargs):
+            if isinstance(keys, str) and '{Esc}' in keys and _is_wechat_window_target(self):
+                log.warning('[esc-guard] blocked Esc to WeChat main window (would hide it)')
+                return
+            return original_send_keys(self, keys, *args, **kwargs)
+
+        auto.Control.SendKeys = guarded_send_keys
+        _esc_guard_installed = True
+        log.info('[esc-guard] installed: Esc to WeChat main window is now blocked')
+    except Exception as e:
+        log.error(f'[esc-guard] install failed: {e}')
+
+
 def get_wx():
     global _wx
     if _wx is None:
         from wx4py import WeChatClient
+        _install_wechat_esc_guard()
         log.info('Connecting to WeChat window...')
         _wx = WeChatClient(auto_connect=False)
         try:
