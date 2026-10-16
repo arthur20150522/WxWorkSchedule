@@ -330,12 +330,120 @@ def _get_wechat_ui_node_count(hwnd):
         return -1
 
 
+def _enum_wechat_windows():
+    """All top-level windows owned by Weixin/WeChat, visible ones first.
+
+    Includes HIDDEN windows — after the 3am security kick the real main
+    window can sit hidden for hours while a zombie login window stays
+    visible, and visibility-filtered enumeration never sees it.
+    """
+    import win32gui, win32process, psutil
+    found = []
+
+    def _cb(hwnd, _):
+        try:
+            title = win32gui.GetWindowText(hwnd) or ''
+            cls = win32gui.GetClassName(hwnd) or ''
+            if '微信' not in title and not cls.startswith('Qt'):
+                return
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            try:
+                exe = (psutil.Process(pid).name() or '').lower()
+            except Exception:
+                exe = ''
+            if exe not in ('weixin.exe', 'wechat.exe'):
+                return
+            found.append((0 if win32gui.IsWindowVisible(hwnd) else 1, hwnd))
+        except Exception:
+            pass
+
+    win32gui.EnumWindows(_cb, None)
+    return [hwnd for _, hwnd in sorted(found, key=lambda x: x[0])]
+
+
+def _find_healthy_main_window():
+    """First WeChat window that passes the real-main-window UIA check, else 0."""
+    for hwnd in _enum_wechat_windows():
+        try:
+            if _is_main_window(hwnd):
+                return hwnd
+        except Exception:
+            pass
+    return 0
+
+
+def _show_and_isolate_main_window(main_hwnd):
+    """Foreground the real main window and hide leftover WeChat windows (e.g.
+    a zombie login page) so find_wechat_window() unambiguously picks it."""
+    import ctypes, win32gui, win32con
+    for hwnd in _enum_wechat_windows():
+        if hwnd == main_hwnd:
+            continue
+        try:
+            if win32gui.IsWindowVisible(hwnd):
+                log.info(f'[recover] Hiding non-main WeChat window hwnd={hwnd}')
+                win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+        except Exception:
+            pass
+    try:
+        if not win32gui.IsWindowVisible(main_hwnd):
+            win32gui.ShowWindow(main_hwnd, win32con.SW_RESTORE)
+        ctypes.windll.user32.SetForegroundWindow(main_hwnd)
+    except Exception:
+        pass
+    time.sleep(1)
+
+
+def _find_white_main_window():
+    """Detect a white-screened MAIN window: UIA tree collapsed to <=3 nodes
+    while carrying a MainWindow class marker. Hidden candidates are restored
+    first (a hidden window may simply never have rendered) and re-judged on
+    the next cycle; only a VISIBLE collapsed window is returned."""
+    import ctypes, win32gui, win32con
+    for hwnd in _enum_wechat_windows():
+        node_count = _get_wechat_ui_node_count(hwnd)
+        if not (0 < node_count <= 3):
+            continue
+        if not _has_main_window_class(hwnd):
+            continue
+        if not win32gui.IsWindowVisible(hwnd):
+            log.info(f'[recover] Hidden main-window candidate hwnd={hwnd} ({node_count} nodes) — restoring to force render')
+            try:
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+            continue
+        return hwnd
+    return 0
+
+
+def _has_main_window_class(hwnd):
+    """True if the window's UIA tree (root or any node) carries a MainWindow class."""
+    try:
+        import pythoncom; pythoncom.CoInitialize()
+        import comtypes.client as cc
+        import comtypes.gen.UIAutomationClient as UIA
+        uia = cc.CreateObject('{ff48dba4-60ef-4201-aa87-54103eef594e}', interface=UIA.IUIAutomation)
+        elem = uia.ElementFromHandle(hwnd)
+        if 'MainWindow' in (elem.CurrentClassName or ''):
+            return True
+        all_e = elem.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
+        for i in range(all_e.Length):
+            if 'MainWindow' in (all_e.GetElement(i).CurrentClassName or ''):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 # ── Auto-recovery: detect login page and click "进入微信" ─────────────
 AUTO_RECOVER_ENABLED = os.environ.get('ALLOW_WECHAT_AUTO_RECOVERY') == 'true'
 AUTO_RECOVER_INTERVAL = 300  # check every 5min
 LAST_RECOVER_ACTION = 0      # timestamp of last recovery action (cooldown)
 HARD_RECOVER_ENABLED = os.environ.get('ALLOW_WECHAT_HARD_RECOVERY') == 'true'
 HARD_RECOVER_COOLDOWN = 0    # separate cooldown for hard recovery (prevent kill loops)
+_WHITE_SCREEN_FIRST_SEEN = {}  # hwnd -> first detection ts; white must persist 2 cycles before kill
 _recover_lock = threading.Lock()  # prevent concurrent recovery threads
 
 # ── QR live stream ────────────────────────────────────────────────────
@@ -658,71 +766,84 @@ def try_auto_recover():
         except Exception as update_err:
             log.warning(f'[recover] Update prompt handling failed: {update_err}')
 
-        # ── Step -1: Detect stale wx4py session and soft-rebind (NO KILL) ──
-        # Symptom: bridge.is_connected=True, HWND is current, but click/send
-        # silently fails because the cached UIA session inside wx4py points
-        # to old (now-dead) HWNDs. We detect by checking if wx4py's cached
-        # hwnd matches the live one — if not, soft-rebind without killing.
+        # ── Step -1: Verify wx4py is bound to the real MAIN window ──
+        # The 3am security kick leaves a zombie login window visible for
+        # hours while the real main window sits hidden; wx4py's connect then
+        # binds to the zombie (its "use current window" fallback) and every
+        # send fails with "search box not found".  So don't just compare
+        # hwnds — verify the bound window actually IS a main window, and if
+        # not, rebind to whichever WeChat window really is one.
         try:
             wx = get_wx()
+            cached_hwnd = None
             if wx.is_connected:
-                cached_hwnd = None
                 try:
                     if hasattr(wx, '_window') and getattr(wx._window, 'hwnd', None):
                         cached_hwnd = wx._window.hwnd
                 except Exception:
                     pass
-                # Compare cached hwnd to live hwnd
-                live_hwnd = 0
-                try:
-                    from wx4py.core.win32 import find_wechat_window
-                    live_hwnd = find_wechat_window() or 0
-                except Exception:
-                    pass
-                if cached_hwnd and live_hwnd and cached_hwnd != live_hwnd:
-                    log.warning(f'[recover] Stale wx4py session: cached_hwnd={cached_hwnd}, live_hwnd={live_hwnd} → soft-rebind')
-                    rebind_result = soft_rebind_uia()
-                    if rebind_result.get('ok'):
-                        log.info(f'[recover] Soft-rebind OK: {rebind_result}')
-                    else:
-                        log.warning(f'[recover] Soft-rebind failed: {rebind_result}')
-                    LAST_RECOVER_ACTION = time.time()
-                elif cached_hwnd and not win32gui.IsWindow(cached_hwnd):
-                    log.warning(f'[recover] Cached hwnd {cached_hwnd} is dead → soft-rebind')
-                    rebind_result = soft_rebind_uia()
-                    if rebind_result.get('ok'):
-                        log.info(f'[recover] Soft-rebind OK after dead hwnd')
-                    LAST_RECOVER_ACTION = time.time()
-                # else: hwnd matches → no stale session, skip
+            bound_ok = bool(
+                cached_hwnd
+                and win32gui.IsWindow(cached_hwnd)
+                and _is_main_window(cached_hwnd)
+            )
+            if bound_ok:
+                stop_qr_stream()  # healthy — make sure no stream lingers
+                return
+            target = _find_healthy_main_window()
+            if target:
+                log.warning(
+                    f'[recover] Bound window {cached_hwnd} is not a usable main window; '
+                    f'real main window found: {target} → soft-rebind'
+                )
+                _show_and_isolate_main_window(target)
+                rebind_result = soft_rebind_uia()
+                if rebind_result.get('ok'):
+                    log.info(f'[recover] Soft-rebind OK: {rebind_result}')
+                else:
+                    log.warning(f'[recover] Soft-rebind failed: {rebind_result}')
+                LAST_RECOVER_ACTION = time.time()
+            else:
+                log.info('[recover] No healthy main window among WeChat windows (login pending or white screen)')
         except Exception as e:
-            log.debug(f'[recover] soft-rebind check failed: {e}')
+            log.debug(f'[recover] main-window rebind check failed: {e}')
 
-        # ── Step 0: Hard recovery for white screen (loading with ≤3 nodes) ──
+        # ── Step 0: Hard recovery for a white-screened MAIN window ──
+        # White screen = the real main window's UIA tree collapses to ≤3
+        # nodes (renderer dead; observed twice in production). No soft fix
+        # exists, and the account logs back in scan-less via 进入微信, so
+        # kill + relaunch is safe. To never kill a healthy client on a
+        # transient UIA hiccup, the same window must stay white across two
+        # recover cycles before we act.
         global HARD_RECOVER_COOLDOWN
         try:
-            hwnd = find_wechat_window()
-            if hwnd:
-                node_count = _get_wechat_ui_node_count(hwnd)
-                if 0 < node_count <= 3 and not _is_main_window(hwnd):
-                    now = time.time()
+            white_hwnd = _find_white_main_window()
+            if white_hwnd:
+                now = time.time()
+                first_seen = _WHITE_SCREEN_FIRST_SEEN.get(white_hwnd)
+                if first_seen is not None and now - first_seen >= AUTO_RECOVER_INTERVAL - 30:
                     if not HARD_RECOVER_ENABLED:
                         log.warning(
-                            f'[recover] White screen candidate ({node_count} nodes); '
-                            'hard recovery disabled — leaving WeChat running'
+                            f'[recover] White screen CONFIRMED hwnd={white_hwnd} but hard recovery disabled '
+                            '— leaving WeChat running'
                         )
                     elif now - HARD_RECOVER_COOLDOWN < 1800:  # max once per 30min
-                        log.info(f'[recover] White screen ({node_count} nodes) but hard-recover cooldown active, skipping')
+                        log.info(f'[recover] White screen confirmed hwnd={white_hwnd} but hard-recover cooldown active, skipping')
                     else:
-                        log.info(f'[recover] White screen detected ({node_count} nodes) → triggering hard recovery (kill + relaunch)')
+                        log.warning(f'[recover] White screen CONFIRMED hwnd={white_hwnd} → hard recovery (kill + relaunch)')
                         LAST_RECOVER_ACTION = now
                         HARD_RECOVER_COOLDOWN = now
+                        _WHITE_SCREEN_FIRST_SEEN.clear()
                         _kill_wechat()
                         time.sleep(5)
                         _launch_wechat()
                         time.sleep(20)  # wait for WeChat to fully start
                         # After hard recovery, continue to normal recover flow for login click
-                elif node_count <= 3 and _is_main_window(hwnd):
-                    log.info(f'[recover] Detected main window with few nodes ({node_count}), may be transient — will retry next cycle')
+                else:
+                    _WHITE_SCREEN_FIRST_SEEN[white_hwnd] = first_seen or now
+                    log.warning(f'[recover] White screen candidate hwnd={white_hwnd}; will confirm next cycle')
+            elif _WHITE_SCREEN_FIRST_SEEN:
+                _WHITE_SCREEN_FIRST_SEEN.clear()
         except Exception as e:
             log.warning(f'[recover] White screen check failed: {e}')
 
