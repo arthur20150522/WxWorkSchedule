@@ -296,6 +296,20 @@ metadata:
 
 ---
 
+## 2026-11-08 操作日志
+
+### 12:50 ~ 13:20 — 掉线扫码推送链接失效（域名整区停放）根因 + 链接自愈改造
+
+- **现象** 老板反馈掉线推送里的二维码「图片链接」打不开，自述"改域名了"
+- **根因（实证）** 链接由 `server/src/qrRelay.ts` 用 `PUBLIC_BASE_URL=https://wechat.eastpolar.top` 生成（服务器 `.env` 与代码默认值都是它）。但 `eastpolar.top` 整区 DNS 已不在 Cloudflare：`wechat/wx/任意随机子域` 全部解析到 `202.61.86.22`，其权威 NS 为 `exp1.kenpains.com`，返回的是**域名停放页**（nginx 404 + 百度统计 + parking 脚本）→ 推送链接打开即停放页。服务器侧 cloudflared 仍在跑、`config.yml` 仍只注册 `wechat.eastpolar.top → localhost:3000`，被域名侧切断
+- **排查口径提醒** 本机 Clash fake-ip（198.18.x）会让 `curl https://<域名>` 直接 TLS 失败（exit 35），不能据此判断服务端故障；用 DoH（1.1.1.1/dns-query、dns.google/resolve）+ `--resolve` 强制 IP 才能看到真实响应
+- **修复（不依赖具体域名，换域名自愈）** ①`qrRelay.ts` 删除硬编码默认域名，改为 `notePublicOrigin()`：在**token 校验通过后**（authMiddleware）与 `/api/login` 成功时记录老板浏览器实际使用的主机头（过滤 localhost/私网 IP）→ **观测到的 origin 优先于 `.env` 配置** ②新增 `GET /api/qr/ping` + 启动 5s 后/每 5 分钟一次可达性探针（4s 超时，AbortController），在「观测值 / 配置值」里挑真正能通的作为 `activeBase`，全都不通时打 ERROR 日志 ③`authMiddleware.ts`/`api.ts` 各接一行
+- **附带事实** 公网直连 `39.106.127.176:3000` 与 `:80` 均开放（3000 无 HTTPS）→ 即使域名全废，老板用 IP 登录面板后，推送链接会自动切换成该 IP origin
+- **验证** `npx tsc --noEmit` 通过（无构建产物）
+- **未执行** 服务器 `.env` 未改、未重启任何进程（等老板明确授权）；域名/DNS 或 Cloudflare 隧道的新域名仍需老板确认后配置
+
+---
+
 ## 待办
 
 | P | 任务 |

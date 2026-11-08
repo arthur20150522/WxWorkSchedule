@@ -7,7 +7,7 @@ import { verifyPassword, generateToken } from './auth.js';
 import { authenticateToken, AuthRequest } from './authMiddleware.js';
 import { wxBridge } from './wxBridge.js';
 import { pushNotify } from './pushNotify.js';
-import { registerQrRoutes } from './qrRelay.js';
+import { registerQrRoutes, notePublicOrigin } from './qrRelay.js';
 import { taskQueue } from './taskQueue.js';
 import { calculateNextTime } from './taskQueue.js';
 
@@ -33,6 +33,8 @@ app.post('/api/login', async (req, res) => {
     const isValid = await verifyPassword(username, password);
     if (isValid) {
       const token = generateToken(username);
+      // Remember the origin this login came in on — pushed QR links follow it.
+      notePublicOrigin(req);
       await addLog('info', `User "${username}" logged in from ${ip}`);
       res.json({ success: true, token, username });
     } else {

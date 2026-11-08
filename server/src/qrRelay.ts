@@ -29,7 +29,84 @@ const LIVE_TTL_MS = 5 * 60 * 1000; // no frames for 5min → live session expire
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 const QR_SECRET = process.env.QR_PUSH_SECRET || '';
-const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || 'https://wechat.eastpolar.top').replace(/\/+$/, '');
+const ENV_BASE = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+
+// ── Public base resolution ───────────────────────────────────────────────
+// PUBLIC_BASE_URL can silently go stale: when the domain is moved/expired the
+// DNS lands on a parking page and every pushed QR link dies with it (seen
+// 2026-11-08 — eastpolar.top started resolving to a parking IP while the config
+// still said wechat.eastpolar.top). So the admin's own browser teaches us the
+// real origin: whenever a *verified* authenticated request arrives we remember
+// the host it came in on. The observed origin wins over the configured one, and
+// a periodic reachability probe keeps the actually-working base selected.
+const PRIVATE_HOST_RE =
+  /^(localhost|127\.|0\.0\.0\.0|\[?::1\]?|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.)/i;
+const PROBE_INTERVAL_MS = 5 * 60 * 1000;
+const PROBE_TIMEOUT_MS = 4000;
+
+let observedBase = '';
+let activeBase = ENV_BASE;
+let lastProbeAt = 0;
+
+/** Public origin currently used to build pushed links. */
+function publicBase(): string {
+  return activeBase || observedBase || ENV_BASE || `http://127.0.0.1:${process.env.PORT || 3000}`;
+}
+
+function probeBase(base: string): Promise<boolean> {
+  if (!base) return Promise.resolve(false);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  return fetch(`${base}/api/qr/ping`, { signal: ctrl.signal as never })
+    .then((resp) => resp.ok)
+    .catch(() => false)
+    .finally(() => clearTimeout(timer));
+}
+
+async function probeBases(): Promise<void> {
+  const cands: string[] = [];
+  if (observedBase) cands.push(observedBase);
+  if (ENV_BASE && !cands.includes(ENV_BASE)) cands.push(ENV_BASE);
+  if (!cands.length) return;
+  for (const base of cands) {
+    if (await probeBase(base)) {
+      if (activeBase !== base) console.log(`[QR] Public base → ${base} (reachable)`);
+      activeBase = base;
+      lastProbeAt = Date.now();
+      return;
+    }
+    console.warn(`[QR] Public base unreachable: ${base}`);
+  }
+  lastProbeAt = Date.now();
+  console.warn('[QR] No reachable public base — pushed QR links will not open. Check PUBLIC_BASE_URL / DNS.');
+}
+
+/**
+ * Called after a token verified (authMiddleware) and on successful /api/login:
+ * records the origin the admin's browser actually reached us on.
+ */
+export function notePublicOrigin(req: express.Request): void {
+  const raw = String((req.headers['x-forwarded-host'] as string) || req.headers.host || '')
+    .split(',')[0].trim();
+  if (!raw) return;
+  const bare = raw.replace(/:\d+$/, '');
+  if (!bare.includes('.') || PRIVATE_HOST_RE.test(bare)) return;
+
+  const protoRaw = String(
+    (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https',
+  ).split(',')[0].trim().toLowerCase();
+  const base = `${protoRaw === 'http' ? 'http' : 'https'}://${raw}`;
+  if (base === observedBase) return;
+
+  observedBase = base;
+  activeBase = base; // optimistic — the very next push uses it
+  console.log(
+    `[QR] Public origin observed from admin session: ${base}` +
+      (ENV_BASE && ENV_BASE !== base ? ` (PUBLIC_BASE_URL=${ENV_BASE} is stale)` : ''),
+  );
+  // Confirm in the background; falls back to the other candidate if this one is dead.
+  if (Date.now() - lastProbeAt > 30_000) void probeBases();
+}
 
 // ── Live-stream state (in-memory; restart regenerates the token, old URLs die) ──
 let liveToken: string | null = null;
@@ -70,7 +147,7 @@ function deadLinkPageHtml(title: string, detail: string): string {
 
 /** Public live-page URL — used by botManager for the single offline notice. */
 export function getQrViewUrl(): string {
-  return `${PUBLIC_BASE}/api/qr/view/${getOrCreateLiveToken()}`;
+  return `${publicBase()}/api/qr/view/${getOrCreateLiveToken()}`;
 }
 
 function viewPageHtml(token: string): string {
@@ -123,6 +200,17 @@ export function registerQrRoutes(app: express.Express): void {
     console.warn('[QR] QR_PUSH_SECRET not set in .env — /api/qr/live will reject all uploads');
   }
 
+  // Cheap liveness endpoint used by the base probe (and by the admin to eyeball
+  // which domain the pushed links currently use).
+  app.get('/api/qr/ping', (_req, res) => {
+    res.json({ ok: true, base: publicBase(), configured: ENV_BASE || null });
+  });
+
+  // Startup + periodic probe: keeps a working base selected even when the
+  // configured domain has gone stale (parked DNS, expired cert, dead tunnel).
+  setTimeout(() => { void probeBases(); }, 5000).unref();
+  setInterval(() => { void probeBases(); }, PROBE_INTERVAL_MS).unref();
+
   // Live-session expiry sweep: no frames for LIVE_TTL_MS → destroy session.
   // Zero-frame sessions never expire: the link is pushed before the QR window
   // even appears (recover must click "进入微信" first), so killing them here
@@ -153,8 +241,8 @@ export function registerQrRoutes(app: express.Express): void {
       writeFileSync(liveFilePath(), buf);
       liveLastUpdate = Date.now();
 
-      console.log(`[QR] Live frame received (${buf.length}B) → view: ${PUBLIC_BASE}/api/qr/view/${token}`);
-      res.json({ ok: true, url: `${PUBLIC_BASE}/api/qr/view/${token}` });
+      console.log(`[QR] Live frame received (${buf.length}B) → view: ${publicBase()}/api/qr/view/${token}`);
+      res.json({ ok: true, url: `${publicBase()}/api/qr/view/${token}` });
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });
     }
