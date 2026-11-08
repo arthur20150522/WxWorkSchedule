@@ -48,6 +48,38 @@ let observedBase = '';
 let activeBase = ENV_BASE;
 let lastProbeAt = 0;
 
+// Last-resort candidate: the server's own public IP. Beats "push a link that
+// cannot open" when DNS/tunnel/ICP goes sideways (healthyfang.cn is unfiled, so
+// a direct A record gets 403'd by the mainland edge — but :3000 stays reachable).
+const IP_FALLBACK_ENABLED = process.env.QR_IP_FALLBACK !== 'false';
+const IP_CACHE_MS = 6 * 60 * 60 * 1000;
+let ipBase = '';
+let ipCheckedAt = 0;
+
+async function detectPublicIpBase(): Promise<void> {
+  if (!IP_FALLBACK_ENABLED) return;
+  if (ipBase && Date.now() - ipCheckedAt < IP_CACHE_MS) return;
+  const port = process.env.PORT || 3000;
+  for (const url of ['https://checkip.amazonaws.com', 'https://api.ipify.org']) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    try {
+      const resp = await fetch(url, { signal: ctrl.signal as never });
+      if (!resp.ok) continue;
+      const ip = (await resp.text()).trim();
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) {
+        ipBase = `http://${ip}:${port}`;
+        ipCheckedAt = Date.now();
+        return;
+      }
+    } catch {
+      /* try the next provider */
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
 /** Public origin currently used to build pushed links. */
 function publicBase(): string {
   return activeBase || observedBase || ENV_BASE || `http://127.0.0.1:${process.env.PORT || 3000}`;
@@ -64,9 +96,11 @@ function probeBase(base: string): Promise<boolean> {
 }
 
 async function probeBases(): Promise<void> {
+  await detectPublicIpBase();
   const cands: string[] = [];
-  if (observedBase) cands.push(observedBase);
-  if (ENV_BASE && !cands.includes(ENV_BASE)) cands.push(ENV_BASE);
+  for (const b of [observedBase, ENV_BASE, ipBase]) {
+    if (b && !cands.includes(b)) cands.push(b);
+  }
   if (!cands.length) return;
   for (const base of cands) {
     if (await probeBase(base)) {
@@ -203,7 +237,13 @@ export function registerQrRoutes(app: express.Express): void {
   // Cheap liveness endpoint used by the base probe (and by the admin to eyeball
   // which domain the pushed links currently use).
   app.get('/api/qr/ping', (_req, res) => {
-    res.json({ ok: true, base: publicBase(), configured: ENV_BASE || null });
+    res.json({
+      ok: true,
+      base: publicBase(),
+      configured: ENV_BASE || null,
+      observed: observedBase || null,
+      ip: ipBase || null,
+    });
   });
 
   // Startup + periodic probe: keeps a working base selected even when the
