@@ -52,7 +52,10 @@
 - 用户: `Administrator` (SSH key 认证)
 - 项目路径: `C:\Users\Administrator\WxWorkSchedule`
 - PM2 进程名: `wx-schedule`（入口: `server/dist/index.js`，不是 `api.js`）
-- 域名: `wechat.eastpolar.top` → Cloudflare 橙云 → cloudflared 隧道（Windows 服务 `cloudflared`，`C:\cf.exe tunnel run`）→ `http://localhost:3000`
+- 域名: **`wx.healthyfang.cn`**（2026-11-08 起，Cloudflare 橙云 → cloudflared 隧道 → `http://localhost:3000`）
+  - 旧域名 `wechat.eastpolar.top` 已失效：`eastpolar.top` 整区 DNS 离开 Cloudflare，全部子域解析到 `202.61.86.22`（`exp1.kenpains.com`，域名停放页）
+  - ⚠️ `healthyfang.cn` **未 ICP 备案** → 域名直连阿里云主机（A 记录指向 `39.106.127.176`）会被阿里云边缘返回 `403 Non-compliance ICP Filing`；因此**必须走 cloudflared 隧道**（出站连接 + CF 边缘接入，不触发备案拦截）
+  - 推送链接的 base 不再硬编码：`qrRelay.ts` 用「老板会话观测到的 origin」优先于 `PUBLIC_BASE_URL`，并每 5 分钟探活 `/api/qr/ping`
 - nginx（`C:\nginx`，仅监听 80，按 server_name 反代 :3000）不在公网主链路，只影响直连 80 端口的请求
 
 ---
