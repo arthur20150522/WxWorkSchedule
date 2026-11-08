@@ -306,7 +306,10 @@ metadata:
 - **修复（不依赖具体域名，换域名自愈）** ①`qrRelay.ts` 删除硬编码默认域名，改为 `notePublicOrigin()`：在**token 校验通过后**（authMiddleware）与 `/api/login` 成功时记录老板浏览器实际使用的主机头（过滤 localhost/私网 IP）→ **观测到的 origin 优先于 `.env` 配置** ②新增 `GET /api/qr/ping` + 启动 5s 后/每 5 分钟一次可达性探针（4s 超时，AbortController），在「观测值 / 配置值」里挑真正能通的作为 `activeBase`，全都不通时打 ERROR 日志 ③`authMiddleware.ts`/`api.ts` 各接一行
 - **附带事实** 公网直连 `39.106.127.176:3000` 与 `:80` 均开放（3000 无 HTTPS）→ 即使域名全废，老板用 IP 登录面板后，推送链接会自动切换成该 IP origin
 - **验证** `npx tsc --noEmit` 通过（无构建产物）
-- **未执行** 服务器 `.env` 未改、未重启任何进程（等老板明确授权）；域名/DNS 或 Cloudflare 隧道的新域名仍需老板确认后配置
+- **2026-11-08 13:30 追加（老板全授权后已执行）** 新域名确认为 `healthyfang.cn`（CF 托管，`*.healthyfang.cn` 通配橙云；**未 ICP 备案** → 直连阿里云大陆 IP 必被边缘 403 拦，实证 `wx.healthyfang.cn/api/*` 返回阿里云备案拦截页）。执行：服务器 `git pull`（至 `ba060eb`）→ `npx tsc` → `server/.env` 的 `PUBLIC_BASE_URL=https://wx.healthyfang.cn`（已备份 `.env.bak-20261108`）→ `pm2 restart wx-schedule`
+- **追加修复 `ba060eb`** 域名候选全灭时降级到公网 IP：`detectPublicIpBase()`（checkip 探测，缓存 6h）+ 候选顺序 `observed → configured → http://<公网IP>:PORT`；`QR_IP_FALLBACK=false` 可关。实测 `/api/qr/ping` 返回 `base=http://39.106.127.176:3000`（域名未接入时自动降级）✅
+- **隧道现状（关键）** `Cloudflared` 服务是 `cf.exe tunnel run --token ...` = **远端管理模式**，`C:\Users\Administrator\.cloudflared\config.yml` 的 ingress **被忽略** → 新域名必须在 CF 后台给隧道加 Public Hostname（或调 CF API），本地改配置无效
+- **遗留** ①CF 后台加 `wx.healthyfang.cn → http://localhost:3000` 后，老板用该域名登录一次面板，`observedBase` 即接管，推送链接自动回到域名 ②`healthyfang.cn` 若要直连（不走隧道）必须先 ICP 备案
 
 ---
 
