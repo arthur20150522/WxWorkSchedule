@@ -48,8 +48,11 @@ export const BotManager = {
         const wasOnline = online;
         online = res.ok;
 
-        if (wasOnline && !res.ok) {
-          console.warn(`[HealthMonitor] WeChat offline: ${res.reason}`);
+        if (!res.ok) {
+          // Log only on the transition, but alert whenever this offline session
+          // has not been announced yet — otherwise a restart while WeChat is
+          // already offline (online=false on boot) never fires a push.
+          if (wasOnline) console.warn(`[HealthMonitor] WeChat offline: ${res.reason}`);
           // Push once per offline session, and at most once per 30min overall
           if (!wasKickedNotified) {
             wasKickedNotified = true;
@@ -59,7 +62,7 @@ export const BotManager = {
               pushNotify('微信掉线', `原因: ${res.reason}。二维码页面会自动刷新，扫码即恢复`, getQrViewUrl());
             }
           }
-        } else if (!wasOnline && res.ok) {
+        } else if (!wasOnline) {
           console.log('[HealthMonitor] WeChat recovered');
           // No recovery push — the single offline notice is enough; the QR
           // live page expires by itself once frames stop arriving.
