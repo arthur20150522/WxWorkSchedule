@@ -322,7 +322,7 @@ metadata:
 - **页面行为** 有码自动 4s 刷最新帧；扫码恢复后显示「微信已恢复，无需扫码」；掉线但码未生成显示「等待二维码」；无会话显示「微信在线 / 尚未生成，掉线后新码自动出现，无需等推送」。登录态走 Cookie（JWT 30d），与面板 localStorage Bearer 互不干扰
 - **零基础设施改动** 域名整域已走 cloudflared 隧道 → :3000，/screen 同 origin 新增路由即可，DNS / 隧道 ingress 不用动；不新增任何 npm 依赖（Cookie 手动解析）
 - **验证** `npx tsc --noEmit` 通过（exit 0，无构建产物，符合低配规则）
-- **待部署** 代码就绪未提交；部署走铁律 git push origin fork4win → 远端 pull + npx tsc + pm2 restart wx-schedule，等老板口令
+- **已部署上线（同日）** 本地 commit `c076916` → push origin fork4win → 远端 `git pull --ff-only`（ba060eb→c076916，非破坏性快进；untracked 的 .env/.user/db.json/data 及 .bak 全保留）→ `npx tsc` 通过 → `pm2 restart wx-schedule`（online，wx-bridge 未动）。验证：公网 `https://wechat.healthyfang.cn/screen` 返回 200 + 登录页；未登录 `/screen/state`、`/screen/frame.png` 均 401；`/api/qr/ping` ok 且 base=域名；启动日志干净、bridge connected。error.log 里 `Public base unreachable` 为重启前历史条目，重启后探针正常（base 仍为域名，未降级 IP）
 
 ---
 
