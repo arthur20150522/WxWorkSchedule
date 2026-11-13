@@ -313,6 +313,19 @@ metadata:
 
 ---
 
+## 2026-11-13 操作日志
+
+### 10:10 — 新增 /screen 固定扫码入口（账号密码 + 30 天 Cookie，原推送不动）
+
+- **需求** 老板要固定别称 `wechat.healthyfang.cn/screen`：路径不变、二维码实时，账号密码验证，登录过缓存一个月；原掉线推送链接 / token 机制一律不动
+- **实现（纯增量）** ①新文件 `server/src/screen.ts`：`GET /screen`（已登录→实时二维码页，未登录→登录页）、`POST /screen/login`（复用面板 `.user` 账号 verifyPassword；成功发 30 天 HttpOnly + SameSite=Lax Cookie，HTTPS 加 Secure；失败 5 次锁 1 分钟）、`GET /screen/frame.png`（Cookie 鉴权，永远返回当前最新帧，URL 无 token）、`GET /screen/state`（页面 4s 轮询：有码 / 等码 / 已恢复）②`qrRelay.ts` 导出只读 `getQrLiveState()` ③`auth.ts` `generateToken` 加可选有效期参数（默认仍 7d，面板不受影响）④`api.ts` 在 registerQrRoutes 后注册（先于 index.ts 的 SPA fallback，/screen 不会被前端路由吃掉）
+- **页面行为** 有码自动 4s 刷最新帧；扫码恢复后显示「微信已恢复，无需扫码」；掉线但码未生成显示「等待二维码」；无会话显示「微信在线 / 尚未生成，掉线后新码自动出现，无需等推送」。登录态走 Cookie（JWT 30d），与面板 localStorage Bearer 互不干扰
+- **零基础设施改动** 域名整域已走 cloudflared 隧道 → :3000，/screen 同 origin 新增路由即可，DNS / 隧道 ingress 不用动；不新增任何 npm 依赖（Cookie 手动解析）
+- **验证** `npx tsc --noEmit` 通过（exit 0，无构建产物，符合低配规则）
+- **待部署** 代码就绪未提交；部署走铁律 git push origin fork4win → 远端 pull + npx tsc + pm2 restart wx-schedule，等老板口令
+
+---
+
 ## 待办
 
 | P | 任务 |

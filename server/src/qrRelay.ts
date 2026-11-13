@@ -184,6 +184,26 @@ export function getQrViewUrl(): string {
   return `${publicBase()}/api/qr/view/${getOrCreateLiveToken()}`;
 }
 
+export interface QrLiveState {
+  hasSession: boolean;
+  hasFrame: boolean;
+  framePath: string;
+  lastUpdate: number;
+  lastClearReason: 'recovered' | 'expired' | null;
+}
+
+/** Read-only snapshot for the fixed /screen alias (cookie-authed, token-free). */
+export function getQrLiveState(): QrLiveState {
+  const path = liveFilePath();
+  return {
+    hasSession: liveToken !== null,
+    hasFrame: liveLastUpdate > 0 && !!path && existsSync(path),
+    framePath: path,
+    lastUpdate: liveLastUpdate,
+    lastClearReason,
+  };
+}
+
 function viewPageHtml(token: string): string {
   const imgBase = `/api/qr/live/${token}.png`;
   return `<!doctype html>

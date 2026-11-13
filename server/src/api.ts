@@ -8,6 +8,7 @@ import { authenticateToken, AuthRequest } from './authMiddleware.js';
 import { wxBridge } from './wxBridge.js';
 import { pushNotify } from './pushNotify.js';
 import { registerQrRoutes, notePublicOrigin } from './qrRelay.js';
+import { registerScreenRoutes } from './screen.js';
 import { taskQueue } from './taskQueue.js';
 import { calculateNextTime } from './taskQueue.js';
 
@@ -48,6 +49,9 @@ app.post('/api/login', async (req, res) => {
 
 // ── QR login relay (public — called by bridge.py with shared secret) ──
 registerQrRoutes(app);
+
+// ── Fixed QR alias /screen (cookie-authed; pushed token URLs untouched) ──
+registerScreenRoutes(app);
 
 // ── Protected routes ─────────────────────────────────────
 const apiRouter = express.Router();

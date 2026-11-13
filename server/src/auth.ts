@@ -65,9 +65,9 @@ export async function verifyPassword(username: string, password: string): Promis
   return false;
 }
 
-/** Generate a JWT token (7-day expiry) */
-export function generateToken(username: string): string {
-  return jwt.sign({ username }, JWT_SECRET as jwt.Secret, { expiresIn: '7d' });
+/** Generate a JWT token (default 7-day expiry) */
+export function generateToken(username: string, expiresIn: jwt.SignOptions['expiresIn'] = '7d'): string {
+  return jwt.sign({ username }, JWT_SECRET as jwt.Secret, { expiresIn });
 }
 
 /** Verify a JWT token — returns username or null */
